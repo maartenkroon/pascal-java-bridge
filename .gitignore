@@ -1,0 +1,20 @@
+# build output (build.sh, fpc)
+build/
+*.o
+*.ppu
+*.a
+*.compiled
+*.exe
+*.dcu
+lib/
+backup/
+
+# compiled Java classes (javac -d java writes them next to the sources)
+*.class
+
+# editors / OS
+*.bak
+*~
+.DS_Store
+.idea/
+.vscode/
