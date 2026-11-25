@@ -1,6 +1,7 @@
 program TestBindings;
 
-{ Exercises the generated JDemo unit. Compiles with FPC and Delphi. }
+{ Exercises the generated JDemo unit(s). Compiles with FPC and Delphi. Define UNIT_PER_PACKAGE
+  when JDemo was generated with unitPerPackage. }
 
 {$IFDEF FPC}
   {$MODE DELPHI}
@@ -15,7 +16,9 @@ uses
   {$ELSE}
   System.SysUtils, System.Classes,
   {$ENDIF}
-  JavaBridge, JDemo;
+  JavaBridge, JDemo
+  { generated with unitPerPackage: the records are in one unit per Java package }
+  {$IFDEF UNIT_PER_PACKAGE}, JDemo_demo, JDemo_java_lang, JDemo_java_util, JDemo_java_util_function{$ENDIF};
 
 var
   Failures: Integer = 0;

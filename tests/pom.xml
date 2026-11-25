@@ -17,6 +17,7 @@
 
   <properties>
     <pascal.generated.dir>${project.build.directory}/generated-sources/pascal</pascal.generated.dir>
+    <pascal.generated.pp.dir>${project.build.directory}/generated-sources/pascal-per-package</pascal.generated.pp.dir>
     <skipTests>false</skipTests>
   </properties>
 
@@ -63,34 +64,46 @@
       </activation>
       <build>
         <plugins>
-          <!-- dogfooding: generate JDemo.pas (and copy the runtime) with our own plugin -->
+          <!-- dogfooding: generate JDemo (and copy the runtime) with our own plugin, in both layouts -->
           <plugin>
             <groupId>io.github.maartenkroon</groupId>
             <artifactId>pascal-java-bridge-maven-plugin</artifactId>
             <version>${project.version}</version>
+            <configuration>
+              <unit>JDemo</unit>
+              <includes>
+                <include>demo.*</include>
+                <include>java.util.ArrayList</include>
+                <include>java.util.List</include>
+                <include>java.util.Iterator</include>
+                <include>java.lang.StringBuilder</include>
+                <include>java.lang.Runnable</include>
+                <include>java.lang.Throwable</include>
+                <include>java.util.HashMap</include>
+                <include>java.util.Map</include>
+                <include>java.util.Map$Entry</include>
+                <include>java.util.Comparator</include>
+                <include>java.util.function.Function</include>
+              </includes>
+            </configuration>
             <executions>
+              <!-- explicit phases: then 'mvn clean' doesn't need the (not yet built) plugin -->
               <execution>
-                <!-- explicit phase: then 'mvn clean' doesn't need the (not yet built) plugin -->
+                <id>single-unit</id>
+                <phase>process-classes</phase>
+                <goals>
+                  <goal>generate</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>unit-per-package</id>
                 <phase>process-classes</phase>
                 <goals>
                   <goal>generate</goal>
                 </goals>
                 <configuration>
-                  <unit>JDemo</unit>
-                  <includes>
-                    <include>demo.*</include>
-                    <include>java.util.ArrayList</include>
-                    <include>java.util.List</include>
-                    <include>java.util.Iterator</include>
-                    <include>java.lang.StringBuilder</include>
-                    <include>java.lang.Runnable</include>
-                    <include>java.lang.Throwable</include>
-                    <include>java.util.HashMap</include>
-                    <include>java.util.Map</include>
-                    <include>java.util.Map$Entry</include>
-                    <include>java.util.Comparator</include>
-                    <include>java.util.function.Function</include>
-                  </includes>
+                  <unitPerPackage>true</unitPerPackage>
+                  <outputDirectory>${pascal.generated.pp.dir}</outputDirectory>
                 </configuration>
               </execution>
             </executions>
@@ -140,6 +153,45 @@
                 <configuration>
                   <skip>${skipTests}</skip>
                   <executable>${project.build.directory}/TestBindings</executable>
+                  <arguments>
+                    <argument>--checkjni</argument>
+                    <argument>--classpath</argument>
+                    <argument>${project.build.outputDirectory}</argument>
+                  </arguments>
+                  <environmentVariables>
+                    <JAVA_HOME>${java.home}</JAVA_HOME>
+                  </environmentVariables>
+                </configuration>
+              </execution>
+              <execution>
+                <id>fpc-compile-per-package</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${fpc.executable}</executable>
+                  <arguments>
+                    <argument>-O2</argument>
+                    <argument>-vwn</argument>
+                    <argument>-Sew</argument>
+                    <argument>-dUNIT_PER_PACKAGE</argument>
+                    <argument>-FU${pascal.generated.pp.dir}</argument>
+                    <argument>-Fu${pascal.generated.pp.dir}</argument>
+                    <argument>-o${pascal.generated.pp.dir}/TestBindings</argument>
+                    <argument>${project.basedir}/src/test/pascal/TestBindings.pas</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
+                <id>pascal-test-per-package</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skipTests}</skip>
+                  <executable>${pascal.generated.pp.dir}/TestBindings</executable>
                   <arguments>
                     <argument>--checkjni</argument>
                     <argument>--classpath</argument>

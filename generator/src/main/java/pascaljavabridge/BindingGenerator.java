@@ -168,6 +168,17 @@ public final class BindingGenerator {
         String jniName() { return c2jni(cls); }
     }
 
+    /** Unit-per-package mode: one generated package unit (one package, or a cycle of them). */
+    static final class PUnit {
+        String name;
+        final List<String> packages = new ArrayList<>();
+        List<TInfo> types = new ArrayList<>();          // in topological order
+        final Map<String, Integer> classes = new LinkedHashMap<>();
+        final Map<Integer, Integer> methods = new HashMap<>();
+        final Map<Integer, Integer> fields = new HashMap<>();
+        final Set<PUnit> implUses = new HashSet<>();   // units whose implementation classes are used
+    }
+
     // ------------------------------------------------------------------ state
 
     final String unitName;
@@ -177,6 +188,10 @@ public final class BindingGenerator {
     final Map<String, Integer> classSlots = new LinkedHashMap<>();
     int methodSlots = 0, fieldSlots = 0, implCounter = 0;
     String varClasses, varMethods, varFields;
+    boolean unitPerPackage;
+    final List<PUnit> units = new ArrayList<>();
+    final Map<TInfo, PUnit> unitOf = new HashMap<>();
+    PUnit cur;   // package unit being emitted (null in single-unit mode)
 
     BindingGenerator(String unitName, ClassLoader loader) {
         this.unitName = unitName;
@@ -201,6 +216,11 @@ public final class BindingGenerator {
         public int depth;
         /** Also write the Pascal runtime (JavaBridge.pas, JavaBridgeHandler.inc). */
         public boolean withRuntime;
+        /**
+         * Write the interface types to the unit {@link #unit} and the records and implementation
+         * code to one unit per Java package, named {@code <unit>_<package>} (e.g. JJava_java_util).
+         */
+        public boolean unitPerPackage;
         public java.util.function.Consumer<String> info = System.out::println;
         public java.util.function.Consumer<String> warn = m -> System.err.println("warning: " + m);
     }
@@ -208,7 +228,7 @@ public final class BindingGenerator {
     /** Runtime files shipped in the generator jar (see generator/pom.xml). */
     public static final List<String> RUNTIME_FILES = List.of("JavaBridge.pas", "JavaBridgeHandler.inc");
 
-    /** Generates the unit; returns the path of the written .pas file. */
+    /** Generates the unit(s); returns the path of the written .pas file (the types unit). */
     public static Path generate(Options o) throws Exception {
         if (o.unit == null || !o.unit.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))
             throw new IllegalArgumentException("Invalid or missing unit name: " + o.unit);
@@ -223,13 +243,21 @@ public final class BindingGenerator {
             g.classpath = o.classpath;
             g.info = o.info;
             g.warn = o.warn;
+            g.unitPerPackage = o.unitPerPackage;
             g.collect(o.includes, o.excludes, o.depth);
             g.assignNames();
-            String code = g.emit();
             Path file = o.outputDirectory.resolve(o.unit + ".pas");
             Files.createDirectories(o.outputDirectory);
-            writeIfChanged(file, code);
-            o.info.accept("Wrote " + file + " (" + g.types.size() + " Java types)");
+            if (!o.unitPerPackage) {
+                writeIfChanged(file, g.emit());
+                o.info.accept("Wrote " + file + " (" + g.types.size() + " Java types)");
+            } else {
+                for (PUnit u : g.units)
+                    writeIfChanged(o.outputDirectory.resolve(u.name + ".pas"), g.emitPackageUnit(u));
+                writeIfChanged(file, g.emitTypesUnit());
+                o.info.accept("Wrote " + file + " and " + g.units.size() + " package units to "
+                        + o.outputDirectory + " (" + g.types.size() + " Java types)");
+            }
             if (o.withRuntime) writeRuntime(o.outputDirectory);
             return file;
         }
@@ -269,6 +297,7 @@ public final class BindingGenerator {
                 case "--depth" -> o.depth = Integer.parseInt(args[++i]);
                 case "--exclude" -> o.excludes.add(args[++i]);
                 case "--with-runtime" -> o.withRuntime = true;
+                case "--unit-per-package" -> o.unitPerPackage = true;
                 case "-h", "--help" -> { usage(); return; }
                 default -> o.includes.add(args[i]);
             }
@@ -281,7 +310,7 @@ public final class BindingGenerator {
         System.err.println("""
                 usage: java -jar pascal-java-bridge-generator.jar --unit <PascalUnitName> [--out <dir>]
                          [--cp <classpath>] [--depth <n>] [--exclude <pattern>]... [--with-runtime]
-                         <pattern>...
+                         [--unit-per-package] <pattern>...
 
                   <pattern>       a class name (java.util.ArrayList, java.util.Map$Entry) or a
                                   wildcard pattern:
@@ -293,7 +322,11 @@ public final class BindingGenerator {
                   --exclude       leave out classes matching the pattern (repeatable)
                   --depth n       also wrap the public types referenced by the selected classes,
                                   up to n levels deep (default 0)
-                  --with-runtime  also write the Pascal runtime unit (JavaBridge.pas + .inc)""");
+                  --with-runtime  also write the Pascal runtime unit (JavaBridge.pas + .inc)
+                  --unit-per-package
+                                  write the interface types to <PascalUnitName> and the records
+                                  and implementation code to one unit per Java package, named
+                                  <PascalUnitName>_<package> (e.g. JJava_java_util)""");
     }
 
     // ------------------------------------------------------------------ collection
@@ -490,6 +523,8 @@ public final class BindingGenerator {
     void assignNames() {
         // reserve the unit name (and its dotted parts) and the runtime unit
         for (String part : unitName.split("\\.")) global.claim(part);
+        for (TInfo t : types.values()) t.parent = pascalParent(t);
+        if (unitPerPackage) assignUnits();
 
         // 1. type base names: simple name, qualified when ambiguous (case-insensitive)
         Map<TInfo, String> simple = new HashMap<>();
@@ -529,7 +564,6 @@ public final class BindingGenerator {
 
         // 4. hierarchy, guid, class slot
         for (TInfo t : types.values()) {
-            t.parent = pascalParent(t);
             t.guid = guid("pascal-java-bridge:" + t.cls.getName());
             t.cbGuid = guid("pascal-java-bridge-callback:" + t.cls.getName());
             t.clsSlot = classSlot(t.jniName());
@@ -543,6 +577,90 @@ public final class BindingGenerator {
                 if (m == null) throw new IllegalStateException("abstract method not found: " + k);
                 t.cbMethods.add(m);
             }
+        }
+    }
+
+    static String packageOf(Class<?> c) {
+        String n = c.getName();
+        int dot = n.lastIndexOf('.');
+        return dot < 0 ? "" : n.substring(0, dot);
+    }
+
+    /**
+     * Groups the types into package units. An implementation class inherits from its parent's,
+     * so a unit's interface section uses the units of the parent types; Pascal forbids cycles
+     * there, so packages whose parent relations form a cycle share one unit. That unit is named
+     * after the package that contains the others, or else the one they inherit from most.
+     */
+    void assignUnits() {
+        Map<String, Set<String>> edges = new TreeMap<>();
+        Map<String, Integer> inherited = new HashMap<>();
+        for (TInfo t : types.values()) {
+            String p = packageOf(t.cls);
+            edges.computeIfAbsent(p, k -> new TreeSet<>());
+            if (t.parent != null && !packageOf(t.parent.cls).equals(p)) {
+                edges.get(p).add(packageOf(t.parent.cls));
+                inherited.merge(packageOf(t.parent.cls), 1, Integer::sum);
+            }
+        }
+        // Tarjan's strongly connected components
+        Map<String, Integer> index = new HashMap<>(), low = new HashMap<>();
+        Deque<String> stack = new ArrayDeque<>();
+        Set<String> onStack = new HashSet<>();
+        List<List<String>> sccs = new ArrayList<>();
+        for (String p : edges.keySet()) if (!index.containsKey(p)) tarjan(p, edges, index, low, stack, onStack, sccs);
+
+        Map<String, PUnit> byPackage = new HashMap<>();
+        for (List<String> scc : sccs) {
+            PUnit u = new PUnit();
+            u.packages.addAll(new TreeSet<>(scc));
+            // a package containing all others (java.nio.channels for .spi), else the most inherited
+            String main = u.packages.stream()
+                    .filter(p -> u.packages.stream().allMatch(q -> q.equals(p) || q.startsWith(p + ".")))
+                    .findFirst()
+                    .orElseGet(() -> u.packages.stream()
+                            .max(Comparator.comparing((String p) -> inherited.getOrDefault(p, 0))
+                                    .thenComparing(Comparator.reverseOrder())).orElseThrow());
+            u.packages.remove(main);
+            u.packages.add(0, main);
+            u.name = claimUnitName(main.isEmpty() ? "default" : mangle(main));
+            if (u.packages.size() > 1)
+                warn.accept("packages " + String.join(", ", u.packages) + " depend on each other through "
+                        + "class inheritance, so they share unit " + u.name);
+            for (String p : u.packages) byPackage.put(p, u);
+            units.add(u);
+        }
+        units.sort(Comparator.comparing(u -> u.name.toLowerCase(Locale.ROOT)));
+        for (TInfo t : types.values()) unitOf.put(t, byPackage.get(packageOf(t.cls)));
+        for (TInfo t : topoOrder()) unitOf.get(t).types.add(t);
+    }
+
+    private String claimUnitName(String suffix) {
+        int dot = unitName.lastIndexOf('.');
+        String last = global.claim(unitName.substring(dot + 1) + "_" + suffix);
+        return unitName.substring(0, dot + 1) + last;
+    }
+
+    private static void tarjan(String v, Map<String, Set<String>> edges, Map<String, Integer> index,
+                               Map<String, Integer> low, Deque<String> stack, Set<String> onStack,
+                               List<List<String>> out) {
+        index.put(v, index.size());
+        low.put(v, index.get(v));
+        stack.push(v);
+        onStack.add(v);
+        for (String w : edges.getOrDefault(v, Set.of())) {
+            if (!index.containsKey(w)) {
+                tarjan(w, edges, index, low, stack, onStack, out);
+                low.put(v, Math.min(low.get(v), low.get(w)));
+            } else if (onStack.contains(w)) {
+                low.put(v, Math.min(low.get(v), index.get(w)));
+            }
+        }
+        if (low.get(v).equals(index.get(v))) {
+            List<String> scc = new ArrayList<>();
+            String w;
+            do { w = stack.pop(); onStack.remove(w); scc.add(w); } while (!w.equals(v));
+            out.add(scc);
         }
     }
 
@@ -836,7 +954,7 @@ public final class BindingGenerator {
             Class<?> e = c.getComponentType();
             if (e.isPrimitive()) return "JrNew" + cap(e.getName()) + "Array(" + v + ")";
             if (e == String.class) return "JrNewStringArray(" + v + ")";
-            int slot = classSlot(c2jni(e));
+            int slot = cSlot(c2jni(e));
             return "JrNewObjectArray(" + v + ", JrResolveClass(" + varClasses + "[" + slot + "], "
                     + pasStr(c2jni(e)) + "))";
         }
@@ -869,7 +987,7 @@ public final class BindingGenerator {
         }
         TInfo t = types.get(c);
         if (t == null) return v + " := JavaWrapLocal(LV.l);";
-        return "if LV.l = nil then " + v + " := nil else " + v + " := " + t.impl + ".CreateFromLocal(LV.l);";
+        return "if LV.l = nil then " + v + " := nil else " + v + " := " + implRef(t) + ".CreateFromLocal(LV.l);";
     }
 
     static String c2jni(Class<?> c) {
@@ -921,16 +1039,85 @@ public final class BindingGenerator {
         };
     }
 
+    /** Single-unit mode: everything in one unit. */
     String emit() {
         StringBuilder sb = new StringBuilder();
         List<TInfo> order = topoOrder();
+        emitHeader(sb, unitName, sortedTypes(), null);
+        sb.append("interface\n\nuses\n  JavaBridge;\n\ntype\n");
+        emitInterfaces(sb, order);
+        emitRecords(sb, order);
+        sb.append("implementation\n\ntype\n");
+        emitImplClasses(sb, order);
+        // generate bodies first (they may allocate additional class slots), then globals
+        String bodies = emitBodies(order);
+        emitSlotVars(sb);
+        sb.append(bodies);
+        sb.append("end.\n");
+        return sb.toString();
+    }
+
+    /** Unit-per-package mode: the unit that declares every interface type. */
+    String emitTypesUnit() {
+        StringBuilder sb = new StringBuilder();
+        emitHeader(sb, unitName, sortedTypes(), "Interface types. The companion records (TJ...) are in the "
+                + "package units:\n" + units.stream().map(u -> "    " + u.name + ": "
+                + String.join(", ", u.packages)).collect(Collectors.joining("\n")));
+        sb.append("interface\n\nuses\n  JavaBridge;\n\ntype\n");
+        emitInterfaces(sb, topoOrder());
+        sb.append("implementation\n\nend.\n");
+        return sb.toString();
+    }
+
+    /** Unit-per-package mode: companion records and implementation classes of one package unit. */
+    String emitPackageUnit(PUnit u) {
+        cur = u;
+        try {
+            String bodies = emitBodies(u.types);
+            // interface section: the types unit, plus the units of parent implementation classes
+            Set<PUnit> intfUses = new TreeSet<>(Comparator.comparing((PUnit x) -> x.name));
+            for (TInfo t : u.types)
+                if (t.parent != null && unitOf.get(t.parent) != u) intfUses.add(unitOf.get(t.parent));
+            Set<PUnit> implUses = new TreeSet<>(Comparator.comparing((PUnit x) -> x.name));
+            implUses.addAll(u.implUses);
+            implUses.remove(u);
+            implUses.removeAll(intfUses);
+
+            StringBuilder sb = new StringBuilder();
+            emitHeader(sb, u.name, u.types.stream().sorted(Comparator.comparing(t -> t.cls.getName())).toList(),
+                    "Package unit for " + String.join(", ", u.packages) + "; the interface types are in "
+                    + unitName + ".");
+            sb.append("interface\n\nuses\n  JavaBridge, ").append(unitName);
+            for (PUnit x : intfUses) sb.append(", ").append(x.name);
+            sb.append(";\n\ntype\n");
+            emitRecords(sb, u.types);
+            sb.append("  { Implementation classes: internal, use the interfaces and records instead }\n");
+            emitImplClasses(sb, u.types);
+            sb.append("implementation\n\n");
+            if (!implUses.isEmpty())
+                sb.append("uses\n  ").append(implUses.stream().map(x -> x.name).collect(Collectors.joining(", ")))
+                        .append(";\n\n");
+            emitSlotVars(sb);
+            sb.append(bodies);
+            sb.append("end.\n");
+            return sb.toString();
+        } finally {
+            cur = null;
+        }
+    }
+
+    void emitHeader(StringBuilder sb, String unit, List<TInfo> listed, String note) {
         sb.append("{ Generated by pascal-java-bridge BindingGenerator - do not edit.\n");
+        if (note != null) sb.append("  ").append(note).append('\n');
         sb.append("  Java types:\n");
-        for (TInfo t : sortedTypes())
+        for (TInfo t : listed)
             sb.append("    ").append(t.cls.getName()).append(" -> ").append(t.intf).append(" / ")
                     .append(t.comp).append('\n');
-        sb.append("}\nunit ").append(unitName).append(";\n\n");
-        sb.append("{$IFDEF FPC}\n  {$MODE DELPHI}\n  {$H+}\n{$ENDIF}\n\ninterface\n\nuses\n  JavaBridge;\n\ntype\n");
+        sb.append("}\nunit ").append(unit).append(";\n\n");
+        sb.append("{$IFDEF FPC}\n  {$MODE DELPHI}\n  {$H+}\n{$ENDIF}\n\n");
+    }
+
+    void emitInterfaces(StringBuilder sb, List<TInfo> order) {
         for (TInfo t : order) sb.append("  ").append(t.intf).append(" = interface;\n");
         for (TInfo t : order)
             if (t.hasCallback()) sb.append("  ").append(t.cbIntf).append(" = interface;\n");
@@ -963,7 +1150,9 @@ public final class BindingGenerator {
             }
             sb.append("  end;\n\n");
         }
-        // companion records
+    }
+
+    void emitRecords(StringBuilder sb, List<TInfo> order) {
         for (TInfo t : order) {
             String p = t.statParam;
             sb.append("  { ").append(t.cls.getName()).append(": constructors and static members }\n");
@@ -988,9 +1177,9 @@ public final class BindingGenerator {
             }
             sb.append("  end;\n\n");
         }
+    }
 
-        sb.append("implementation\n\ntype\n");
-        // impl classes
+    void emitImplClasses(StringBuilder sb, List<TInfo> order) {
         for (TInfo t : order) {
             String parentImpl = t.parent == null ? "TJavaObjectImpl" : t.parent.impl;
             sb.append("  ").append(t.impl).append(" = class(").append(parentImpl).append(", ").append(t.intf)
@@ -1003,7 +1192,9 @@ public final class BindingGenerator {
                         .append(" overload;\n");
             sb.append("  end;\n\n");
         }
-        // generate bodies first (they may allocate additional class slots), then globals
+    }
+
+    String emitBodies(List<TInfo> order) {
         StringBuilder bodies = new StringBuilder();
         for (TInfo t : order) if (t.hasCallback()) emitDispatcher(bodies, t);
         for (TInfo t : order) {
@@ -1011,21 +1202,43 @@ public final class BindingGenerator {
             emitCastHelpers(bodies, t);
             for (Member m : t.statics) emitBody(bodies, t, m, true);
         }
+        return bodies.toString();
+    }
+
+    void emitSlotVars(StringBuilder sb) {
+        int nc = cur == null ? classSlots.size() : cur.classes.size();
+        int nm = cur == null ? methodSlots : cur.methods.size();
+        int nf = cur == null ? fieldSlots : cur.fields.size();
+        if (nc + nm + nf == 0) return;
         sb.append("var\n");
-        sb.append("  ").append(varClasses).append(": array[0..").append(Math.max(classSlots.size(), 1) - 1)
-                .append("] of jclass;\n");
-        sb.append("  ").append(varMethods).append(": array[0..").append(Math.max(methodSlots, 1) - 1)
-                .append("] of jmethodID;\n");
-        sb.append("  ").append(varFields).append(": array[0..").append(Math.max(fieldSlots, 1) - 1)
-                .append("] of jfieldID;\n\n");
-        sb.append(bodies);
-        sb.append("end.\n");
-        return sb.toString();
+        if (nc > 0) sb.append("  ").append(varClasses).append(": array[0..").append(nc - 1).append("] of jclass;\n");
+        if (nm > 0) sb.append("  ").append(varMethods).append(": array[0..").append(nm - 1).append("] of jmethodID;\n");
+        if (nf > 0) sb.append("  ").append(varFields).append(": array[0..").append(nf - 1).append("] of jfieldID;\n");
+        sb.append('\n');
+    }
+
+    // slot numbers: global in single-unit mode, per unit in unit-per-package mode
+    int cSlot(String jniName) {
+        return cur == null ? classSlot(jniName) : cur.classes.computeIfAbsent(jniName, k -> cur.classes.size());
+    }
+
+    int mSlot(int global) {
+        return cur == null ? global : cur.methods.computeIfAbsent(global, k -> cur.methods.size());
+    }
+
+    int fSlot(int global) {
+        return cur == null ? global : cur.fields.computeIfAbsent(global, k -> cur.fields.size());
+    }
+
+    /** Name of t's implementation class, recording the unit that declares it. */
+    String implRef(TInfo t) {
+        if (cur != null) cur.implUses.add(unitOf.get(t));
+        return t.impl;
     }
 
     void emitCastHelpers(StringBuilder sb, TInfo t) {
         String p = t.statParam + "0";
-        String cls = "JrResolveClass(" + varClasses + "[" + t.clsSlot + "], " + pasStr(t.jniName()) + ")";
+        String cls = "JrResolveClass(" + varClasses + "[" + cSlot(t.jniName()) + "], " + pasStr(t.jniName()) + ")";
         sb.append("class function ").append(t.comp).append(".Cast(const ").append(p).append(": IJavaObject): ")
                 .append(t.intf).append(";\nvar\n  LH: jobject;\nbegin\n");
         sb.append("  LH := JrCheckCast(").append(p).append(", ").append(cls).append(", ")
@@ -1107,7 +1320,8 @@ public final class BindingGenerator {
         if (m.kind == MKind.CTOR) head = head.replace(": " + pasType(m.ret, false) + ";", ": " + t.intf + ";");
         sb.append(head).append('\n');
 
-        String clsExpr = "JrResolveClass(" + varClasses + "[" + t.clsSlot + "], " + pasStr(t.jniName()) + ")";
+        int cs = cSlot(t.jniName());
+        String clsExpr = "JrResolveClass(" + varClasses + "[" + cs + "], " + pasStr(t.jniName()) + ")";
         String target = m.isStatic || m.kind == MKind.CTOR ? clsExpr : "JavaGlobalRef";
         int n = m.params.length;
         boolean anyLocal = Arrays.stream(m.params).anyMatch(BindingGenerator::argIsLocalRef);
@@ -1124,8 +1338,8 @@ public final class BindingGenerator {
 
         switch (m.kind) {
             case GETTER, SETTER -> {
-                String fid = "JrResolveField(" + varFields + "[" + m.idSlot + "], " + varClasses + "["
-                        + t.clsSlot + "], " + pasStr(t.jniName()) + ", " + pasStr(m.javaName) + ", "
+                String fid = "JrResolveField(" + varFields + "[" + fSlot(m.idSlot) + "], " + varClasses + "["
+                        + cs + "], " + pasStr(t.jniName()) + ", " + pasStr(m.javaName) + ", "
                         + pasStr(m.jniSig) + ", " + (m.isStatic ? "True" : "False") + ")";
                 String args = target + ", " + fid + ", " + kind(m.fieldType) + ", "
                         + (m.isStatic ? "True" : "False");
@@ -1151,8 +1365,8 @@ public final class BindingGenerator {
                 for (int i = 0; i < n; i++)
                     sb.append(ind).append("LA[").append(i).append("].").append(jvalueField(m.params[i]))
                             .append(" := ").append(argToJava(m.params[i], prefix + i)).append(";\n");
-                String mid = "JrResolveMethod(" + varMethods + "[" + m.idSlot + "], " + varClasses + "["
-                        + t.clsSlot + "], " + pasStr(t.jniName()) + ", " + pasStr(m.javaName) + ", "
+                String mid = "JrResolveMethod(" + varMethods + "[" + mSlot(m.idSlot) + "], " + varClasses + "["
+                        + cs + "], " + pasStr(t.jniName()) + ", " + pasStr(m.javaName) + ", "
                         + pasStr(m.jniSig) + ", "
                         + (m.isStatic && m.kind != MKind.CTOR ? "True" : "False") + ")";
                 String argPtr = n > 0 ? "@LA[0]" : "nil";

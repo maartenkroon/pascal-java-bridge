@@ -69,6 +69,13 @@ public class GenerateMojo extends AbstractMojo {
     @Parameter(property = "pascal.withRuntime", defaultValue = "true")
     private boolean withRuntime;
 
+    /**
+     * Write the interface types to the unit {@code unit} and the records and implementation code
+     * to one unit per Java package, named {@code <unit>_<package>} (e.g. JJava_java_util).
+     */
+    @Parameter(property = "pascal.unitPerPackage", defaultValue = "false")
+    private boolean unitPerPackage;
+
     /** Skip this goal. */
     @Parameter(property = "pascal.skip", defaultValue = "false")
     private boolean skip;
@@ -89,6 +96,7 @@ public class GenerateMojo extends AbstractMojo {
         if (excludes != null) o.excludes = new ArrayList<>(excludes);
         o.depth = depth;
         o.withRuntime = withRuntime;
+        o.unitPerPackage = unitPerPackage;
         o.info = getLog()::info;
         o.warn = getLog()::warn;
         try {
