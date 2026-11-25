@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.github.maartenkroon</groupId>
+    <artifactId>pascal-java-bridge-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>pascal-java-bridge-tests</artifactId>
+  <name>pascal-java-bridge tests</name>
+  <description>Java test classes, generated JDemo unit and the Pascal test program. The Pascal part
+    runs when the fpc.executable property is set, e.g. mvn verify -Dfpc.executable=fpc</description>
+
+  <properties>
+    <pascal.generated.dir>${project.build.directory}/generated-sources/pascal</pascal.generated.dir>
+    <skipTests>false</skipTests>
+  </properties>
+
+  <!-- make the reactor build the plugin first -->
+  <dependencies>
+    <dependency>
+      <groupId>io.github.maartenkroon</groupId>
+      <artifactId>pascal-java-bridge-maven-plugin</artifactId>
+      <version>${project.version}</version>
+      <type>maven-plugin</type>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-deploy-plugin</artifactId>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-install-plugin</artifactId>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- Generate JDemo.pas with our own plugin. Active everywhere except inside Eclipse: m2e
+         cannot resolve a Maven plugin that is built in the same workspace, and always sets the
+         m2e.version property. -->
+    <profile>
+      <id>generate-pascal</id>
+      <activation>
+        <property>
+          <name>!m2e.version</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <!-- dogfooding: generate JDemo.pas (and copy the runtime) with our own plugin -->
+          <plugin>
+            <groupId>io.github.maartenkroon</groupId>
+            <artifactId>pascal-java-bridge-maven-plugin</artifactId>
+            <version>${project.version}</version>
+            <executions>
+              <execution>
+                <!-- explicit phase: then 'mvn clean' doesn't need the (not yet built) plugin -->
+                <phase>process-classes</phase>
+                <goals>
+                  <goal>generate</goal>
+                </goals>
+                <configuration>
+                  <unit>JDemo</unit>
+                  <includes>
+                    <include>demo.*</include>
+                    <include>java.util.ArrayList</include>
+                    <include>java.util.List</include>
+                    <include>java.util.Iterator</include>
+                    <include>java.lang.StringBuilder</include>
+                    <include>java.lang.Runnable</include>
+                    <include>java.lang.Throwable</include>
+                    <include>java.util.HashMap</include>
+                    <include>java.util.Map</include>
+                    <include>java.util.Map$Entry</include>
+                    <include>java.util.Comparator</include>
+                    <include>java.util.function.Function</include>
+                  </includes>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <!-- Compile and run the Pascal tests. Activated by -Dfpc.executable=<path to fpc> -->
+    <profile>
+      <id>pascal-tests</id>
+      <activation>
+        <property>
+          <name>fpc.executable</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>fpc-compile</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${fpc.executable}</executable>
+                  <arguments>
+                    <argument>-O2</argument>
+                    <argument>-vwn</argument>
+                    <argument>-Sew</argument>
+                    <argument>-FU${project.build.directory}</argument>
+                    <argument>-Fu${pascal.generated.dir}</argument>
+                    <argument>-o${project.build.directory}/TestBindings</argument>
+                    <argument>${project.basedir}/src/test/pascal/TestBindings.pas</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
+                <id>pascal-test</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skipTests}</skip>
+                  <executable>${project.build.directory}/TestBindings</executable>
+                  <arguments>
+                    <argument>--checkjni</argument>
+                    <argument>--classpath</argument>
+                    <argument>${project.build.outputDirectory}</argument>
+                  </arguments>
+                  <environmentVariables>
+                    <JAVA_HOME>${java.home}</JAVA_HOME>
+                  </environmentVariables>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

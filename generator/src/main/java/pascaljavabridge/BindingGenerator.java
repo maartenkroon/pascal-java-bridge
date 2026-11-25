@@ -28,8 +28,9 @@ import java.util.stream.Collectors;
  * mangled names and are bound to the interface methods with method resolution clauses, so no
  * Java name can ever clash with TObject/TInterfacedObject members.
  *
- * <p>Usage: {@code java BindingGenerator.java --unit Name [--out dir] [--cp path] [--depth n]
- * class...}
+ * <p>Command line: {@code java -jar pascal-java-bridge-generator.jar --unit Name [--out dir]
+ * [--cp path] [--depth n] [--exclude pattern]... [--with-runtime] pattern...}; from Java or the
+ * Maven plugin: {@link #generate(Options)}.
  */
 public final class BindingGenerator {
 
@@ -176,76 +177,130 @@ public final class BindingGenerator {
     final Map<String, Integer> classSlots = new LinkedHashMap<>();
     int methodSlots = 0, fieldSlots = 0, implCounter = 0;
     String varClasses, varMethods, varFields;
-    Class<?> objectClass = Object.class;
 
     BindingGenerator(String unitName, ClassLoader loader) {
         this.unitName = unitName;
         this.loader = loader;
     }
 
-    // ------------------------------------------------------------------ main
+    // ------------------------------------------------------------------ API
 
-    public static void main(String[] args) throws Exception {
-        String unit = null, out = ".", cp = "";
-        int depth = 0;
-        List<String> names = new ArrayList<>();
-        List<String> excludes = new ArrayList<>();
-        for (int i = 0; i < args.length; i++) {
-            switch (args[i]) {
-                case "--unit" -> unit = args[++i];
-                case "--out" -> out = args[++i];
-                case "--cp" -> cp = args[++i];
-                case "--depth" -> depth = Integer.parseInt(args[++i]);
-                case "--exclude" -> excludes.add(args[++i]);
-                case "-h", "--help" -> { usage(); return; }
-                default -> names.add(args[i]);
+    /** Settings for {@link #generate(Options)}; also used by the Maven plugin. */
+    public static final class Options {
+        /** Name of the Pascal unit (also the file name). Required. */
+        public String unit;
+        /** Directory the unit (and, with {@link #withRuntime}, the runtime) is written to. */
+        public Path outputDirectory = Path.of(".");
+        /** Directories and jars to search; the JDK is always available. */
+        public List<Path> classpath = new ArrayList<>();
+        /** Class names or wildcard patterns to wrap. Required. */
+        public List<String> includes = new ArrayList<>();
+        /** Wildcard patterns of classes to leave out. */
+        public List<String> excludes = new ArrayList<>();
+        /** Also wrap types referenced by the selected classes, this many levels deep. */
+        public int depth;
+        /** Also write the Pascal runtime (JavaBridge.pas, JavaBridgeHandler.inc). */
+        public boolean withRuntime;
+        public java.util.function.Consumer<String> info = System.out::println;
+        public java.util.function.Consumer<String> warn = m -> System.err.println("warning: " + m);
+    }
+
+    /** Runtime files shipped in the generator jar (see generator/pom.xml). */
+    public static final List<String> RUNTIME_FILES = List.of("JavaBridge.pas", "JavaBridgeHandler.inc");
+
+    /** Generates the unit; returns the path of the written .pas file. */
+    public static Path generate(Options o) throws Exception {
+        if (o.unit == null || !o.unit.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))
+            throw new IllegalArgumentException("Invalid or missing unit name: " + o.unit);
+        if (o.includes.isEmpty()) throw new IllegalArgumentException("No classes or patterns given");
+        List<URL> urls = new ArrayList<>();
+        for (Path p : o.classpath) urls.add(p.toUri().toURL());
+        // parent = platform loader: only the JDK and the given classpath are visible, never the
+        // generator's own (or Maven's) classes
+        try (URLClassLoader loader = new URLClassLoader(urls.toArray(URL[]::new),
+                ClassLoader.getPlatformClassLoader())) {
+            BindingGenerator g = new BindingGenerator(o.unit, loader);
+            g.classpath = o.classpath;
+            g.info = o.info;
+            g.warn = o.warn;
+            g.collect(o.includes, o.excludes, o.depth);
+            g.assignNames();
+            String code = g.emit();
+            Path file = o.outputDirectory.resolve(o.unit + ".pas");
+            Files.createDirectories(o.outputDirectory);
+            writeIfChanged(file, code);
+            o.info.accept("Wrote " + file + " (" + g.types.size() + " Java types)");
+            if (o.withRuntime) writeRuntime(o.outputDirectory);
+            return file;
+        }
+    }
+
+    /** Copies the Pascal runtime unit from the generator jar to dir. */
+    public static void writeRuntime(Path dir) throws IOException {
+        Files.createDirectories(dir);
+        for (String f : RUNTIME_FILES) {
+            try (var in = BindingGenerator.class.getResourceAsStream("runtime/" + f)) {
+                if (in == null)
+                    throw new IOException("Runtime file " + f + " is not packaged with the generator "
+                            + "(run the generator from its jar)");
+                writeIfChanged(dir.resolve(f), new String(in.readAllBytes(), StandardCharsets.UTF_8));
             }
         }
-        if (unit == null || names.isEmpty()) { usage(); System.exit(2); }
-        if (!unit.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))
-            throw new IllegalArgumentException("Invalid unit name: " + unit);
+    }
 
-        List<URL> urls = new ArrayList<>();
-        List<Path> cpEntries = new ArrayList<>();
-        for (String p : cp.split(java.io.File.pathSeparator))
-            if (!p.isEmpty()) {
-                urls.add(Path.of(p).toUri().toURL());
-                cpEntries.add(Path.of(p));
+    /** Writes the file only if its content differs, so incremental builds don't recompile. */
+    static void writeIfChanged(Path file, String content) throws IOException {
+        if (Files.exists(file) && Files.readString(file, StandardCharsets.UTF_8).equals(content)) return;
+        Files.writeString(file, content, StandardCharsets.UTF_8);
+    }
+
+    // ------------------------------------------------------------------ command line
+
+    public static void main(String[] args) throws Exception {
+        Options o = new Options();
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "--unit" -> o.unit = args[++i];
+                case "--out" -> o.outputDirectory = Path.of(args[++i]);
+                case "--cp" -> {
+                    for (String p : args[++i].split(java.io.File.pathSeparator))
+                        if (!p.isEmpty()) o.classpath.add(Path.of(p));
+                }
+                case "--depth" -> o.depth = Integer.parseInt(args[++i]);
+                case "--exclude" -> o.excludes.add(args[++i]);
+                case "--with-runtime" -> o.withRuntime = true;
+                case "-h", "--help" -> { usage(); return; }
+                default -> o.includes.add(args[i]);
             }
-        ClassLoader loader = new URLClassLoader(urls.toArray(URL[]::new),
-                BindingGenerator.class.getClassLoader());
-
-        BindingGenerator g = new BindingGenerator(unit, loader);
-        g.classpath = cpEntries;
-        g.collect(names, excludes, depth);
-        g.assignNames();
-        String code = g.emit();
-        Path file = Path.of(out, unit + ".pas");
-        Files.createDirectories(file.getParent());
-        Files.writeString(file, code, StandardCharsets.UTF_8);
-        System.out.println("Wrote " + file + " (" + g.types.size() + " Java types)");
+        }
+        if (o.unit == null || o.includes.isEmpty()) { usage(); System.exit(2); }
+        generate(o);
     }
 
     static void usage() {
         System.err.println("""
-                usage: java BindingGenerator.java --unit <PascalUnitName> [--out <dir>]
-                         [--cp <classpath>] [--depth <n>] [--exclude <pattern>]... <pattern>...
+                usage: java -jar pascal-java-bridge-generator.jar --unit <PascalUnitName> [--out <dir>]
+                         [--cp <classpath>] [--depth <n>] [--exclude <pattern>]... [--with-runtime]
+                         <pattern>...
 
-                  <pattern>   a class name (java.util.ArrayList, java.util.Map$Entry) or a
-                              wildcard pattern:
-                                java.util.*       all public classes in package java.util
-                                java.util.**      ... and in all its subpackages
-                                java.util.*Map    '*' matches within one name segment,
-                                                  '**' matches across packages
-                              Wildcards search the JDK (exported packages only) and --cp.
-                  --exclude   leave out classes matching the pattern (repeatable)
-                  --depth n   also wrap the public types referenced by the selected classes,
-                              up to n levels deep (default 0)""");
+                  <pattern>       a class name (java.util.ArrayList, java.util.Map$Entry) or a
+                                  wildcard pattern:
+                                    java.util.*       all public classes in package java.util
+                                    java.util.**      ... and in all its subpackages
+                                    java.util.*Map    '*' matches within one name segment,
+                                                      '**' matches across packages
+                                  Wildcards search the JDK (exported packages only) and --cp.
+                  --exclude       leave out classes matching the pattern (repeatable)
+                  --depth n       also wrap the public types referenced by the selected classes,
+                                  up to n levels deep (default 0)
+                  --with-runtime  also write the Pascal runtime unit (JavaBridge.pas + .inc)""");
     }
 
     // ------------------------------------------------------------------ collection
 
     List<Path> classpath = List.of();
+    java.util.function.Consumer<String> info = System.out::println;
+    java.util.function.Consumer<String> warn = m -> System.err.println("warning: " + m);
 
     void collect(List<String> names, List<String> excludes, int depth) throws Exception {
         List<java.util.regex.Pattern> ex = excludes.stream().map(BindingGenerator::globToRegex).toList();
@@ -263,8 +318,8 @@ public final class BindingGenerator {
                     matched++;
                     if (set.add(c)) frontier.add(c);
                 }
-                System.out.println(n + ": " + matched + " public types");
-                if (matched == 0) System.err.println("warning: no public classes match " + n);
+                info.accept(n + ": " + matched + " public types");
+                if (matched == 0) warn.accept("no public classes match " + n);
                 continue;
             }
             Class<?> c = Class.forName(n, false, loader);
@@ -357,13 +412,13 @@ public final class BindingGenerator {
             if (m.isNamed() && !m.isExported(c.getPackageName())) return null;   // JDK internals
             return isUsable(c) ? c : null;
         } catch (ClassNotFoundException | LinkageError e) {
-            System.err.println("warning: skipping " + name + ": " + e);
+            warn.accept("skipping " + name + ": " + e);
             return null;
         }
     }
 
     /** False if reflecting over the class fails (e.g. missing dependencies on the classpath). */
-    static boolean isUsable(Class<?> c) {
+    boolean isUsable(Class<?> c) {
         try {
             c.getMethods();
             c.getDeclaredMethods();
@@ -372,7 +427,7 @@ public final class BindingGenerator {
             c.getConstructors();
             return true;
         } catch (LinkageError | SecurityException e) {
-            System.err.println("warning: skipping " + c.getName() + ": " + e);
+            warn.accept("skipping " + c.getName() + ": " + e);
             return false;
         }
     }

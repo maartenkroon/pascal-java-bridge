@@ -1,5 +1,6 @@
-# build output (build.sh, fpc)
-build/
+# build output (Maven, fpc)
+target/
+/build/
 *.o
 *.ppu
 *.a
@@ -12,7 +13,11 @@ backup/
 # compiled Java classes (javac -d java writes them next to the sources)
 *.class
 
-# editors / OS
+# editors / OS (Eclipse metadata is regenerated from the POMs on import)
+.project
+.classpath
+.settings/
+.factorypath
 *.bak
 *~
 .DS_Store

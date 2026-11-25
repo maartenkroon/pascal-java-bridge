@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.github.maartenkroon</groupId>
+  <artifactId>pascal-java-bridge-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>pascal-java-bridge</name>
+  <description>Call Java from Free Pascal and Delphi: generated, reference-counted Object Pascal
+    wrappers for Java classes, an in-process JVM via JNI, and Java-to-Pascal callbacks.</description>
+  <url>https://github.com/maartenkroon/pascal-java-bridge</url>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>maartenkroon</id>
+      <name>Maarten Kroon</name>
+    </developer>
+  </developers>
+
+  <scm>
+    <url>https://github.com/maartenkroon/pascal-java-bridge</url>
+    <connection>scm:git:https://github.com/maartenkroon/pascal-java-bridge.git</connection>
+  </scm>
+
+  <modules>
+    <!-- order matters: handler writes runtime/JavaBridgeHandler.inc, which the generator jar embeds -->
+    <module>handler</module>
+    <module>generator</module>
+    <module>maven-plugin</module>
+    <module>tests</module>
+  </modules>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- the generator and plugin run on any JDK >= 17 -->
+    <maven.compiler.release>17</maven.compiler.release>
+    <maven.version>3.8.1</maven.version>
+    <plugin-tools.version>3.13.1</plugin-tools.version>
+    <!-- Pascal runtime sources, shared by all modules -->
+    <pascal.runtime.dir>${maven.multiModuleProjectDirectory}/runtime</pascal.runtime.dir>
+  </properties>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>3.13.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>3.3.1</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>3.4.2</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>3.5.2</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-install-plugin</artifactId>
+          <version>3.1.3</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-deploy-plugin</artifactId>
+          <version>3.1.3</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-plugin-plugin</artifactId>
+          <version>${plugin-tools.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>3.5.0</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>

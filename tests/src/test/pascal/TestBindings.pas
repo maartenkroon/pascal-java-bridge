@@ -433,12 +433,29 @@ end;
 
 var
   ClassPath: string;
+  CheckJNI: Boolean;
+  I: Integer;
 begin
-  ClassPath := '-Djava.class.path=' + ExtractFilePath(ParamStr(0)) + '../java';
-  if ParamStr(1) = '--checkjni' then
-    JavaStartVM('', [ClassPath, '-Xcheck:jni'])
+  { usage: TestBindings [--checkjni] [--classpath <dir-or-jars>]
+    default class path: target/classes next to the executable (Maven layout) }
+  ClassPath := ExtractFilePath(ParamStr(0)) + 'classes';
+  CheckJNI := False;
+  I := 1;
+  while I <= ParamCount do
+  begin
+    if ParamStr(I) = '--checkjni' then
+      CheckJNI := True
+    else if (ParamStr(I) = '--classpath') and (I < ParamCount) then
+    begin
+      Inc(I);
+      ClassPath := ParamStr(I);
+    end;
+    Inc(I);
+  end;
+  if CheckJNI then
+    JavaStartVM('', ['-Djava.class.path=' + ClassPath, '-Xcheck:jni'])
   else
-    JavaStartVM('', [ClassPath]);
+    JavaStartVM('', ['-Djava.class.path=' + ClassPath]);
   try
     TestGreeter;
     TestTorture;

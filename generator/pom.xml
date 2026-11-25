@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.github.maartenkroon</groupId>
+    <artifactId>pascal-java-bridge-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>pascal-java-bridge-generator</artifactId>
+  <name>pascal-java-bridge generator</name>
+  <description>Generates Object Pascal (Free Pascal / Delphi) wrapper units for Java classes.
+    Executable jar; also contains the Pascal runtime unit (JavaBridge.pas).</description>
+
+  <build>
+    <resources>
+      <!-- ship the Pascal runtime inside the jar, so the with-runtime option and the Maven plugin can copy it -->
+      <resource>
+        <directory>${pascal.runtime.dir}</directory>
+        <targetPath>pascaljavabridge/runtime</targetPath>
+        <includes>
+          <include>JavaBridge.pas</include>
+          <include>JavaBridgeHandler.inc</include>
+        </includes>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>pascaljavabridge.BindingGenerator</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
