@@ -2,7 +2,9 @@
 
 Status: written on 2026-11-27 so the work can continue on a Windows machine. Step 0 (Delphi
 compiles and passes the tests) is done. Part 1 is done, including the in-process COM server
-(decision 1: DLL). Part 2 is working in both layouts (see its progress section).
+(decision 1: DLL). Part 2 is done (both layouts, 64-bit and 32-bit, tested up to VBA). Part 3
+is a proposal: configuration, COM-style collections, more type mappings, an optional
+out-of-process server.
 
 ## Goal
 
@@ -274,6 +276,118 @@ pass. Two bugs that 64-bit hid:
 
 Nothing is left open for Part 2.
 
+## Part 3: from working to usable (proposal)
+
+Parts 1 and 2 make Java callable from every COM client and test it from Delphi, VBScript,
+JScript, PowerShell, C# and VBA, in 64-bit and 32-bit. Part 3 covers what a real user of the
+servers runs into next: getting the JVM configured without code, Java collections that behave
+like COM collections, the COM types that have no mapping yet, and the limits of the in-process
+model. Each item stands on its own; the suggested order is at the end, and the decisions it needs
+are listed under Open decisions.
+
+### 3a. Configuration and automatic start
+
+Today a client must set `JvmPath` and call `Start(classPath, options)` before anything else. A
+class property used first (`jdemo.Torture`) starts the JVM through `JrComEnsureVM` with no class
+path and no options, so the generated classes then fail with "Java class not found". For VBA
+users, who just want `CreateObject("PascalJavaBridge.JDemo").Torture.New()` to work, this is the
+most likely first failure.
+
+- A configuration file next to the server DLL, `<server>.ini` (or `.json`), read on first use:
+  `JavaHome` / `JvmPath`, `ClassPath` (relative entries resolved against the DLL's directory),
+  `Options` (one per line, e.g. `-Xmx512m`), and optionally `Required` (fail clearly instead of
+  starting without it). `Start` keeps working and overrides the file.
+- Lookup order for the JVM: `JvmPath` set by the client, the file, `JAVA_HOME`, then the
+  registry (`HKLM\SOFTWARE\JavaSoft\JDK\<CurrentVersion>\JavaHome`).
+- A clear error when the JVM's bitness doesn't match the host (load `jvm.dll`, check the PE
+  machine type first): "32-bit Office needs a 32-bit JVM (JDK 17 to 23)" instead of "Cannot load".
+- Both servers: the late-bound `PascalJavaBridgeCom.dll` and every generated `<unit>ComServer`.
+- Tests: a server copy with an `.ini` in a temporary directory; VBScript calls `jdemo.Greeter`
+  without `Start`.
+
+### 3b. Java collections as COM collections
+
+VBA and VB6 code expects `list(0)`, `list.Count` and `map("key")`. Now a `List` result has `size`,
+`get(int)` and For Each, and its default member (DISPID 0) is `toString`.
+
+- For wrapped types assignable to `java.util.List`, `Map`, `Collection` and arrays seen as
+  variants: add `Count` (property, from `size()`) and `Item(index)` / `Item(key)` (property get
+  and put, from `get`/`set`/`put`) to the dual interface, with names claimed through the normal
+  `Table` so they never clash with Java members.
+- The default member becomes `Item` for these types, so `list(0)` and `map("k")` work, and `CStr`
+  of a collection no longer gives `toString` (decision 3).
+- Late binding (`TJavaDispatch`) gets the same members, so both servers behave alike.
+- Tests in VBScript, VBA (`For i = 0 To list.Count - 1`) and C# (`list[0]` through the interop
+  assembly's indexer).
+
+### 3c. Missing type mappings
+
+| COM | Java | Now | Proposal |
+|---|---|---|---|
+| `Date` (VT_DATE) | `java.time.LocalDateTime` / `java.util.Date` | in: a `Double` (the OLE date number); out: no mapping | `LocalDateTime` both ways for `Object` parameters and results; declared `Date` / `LocalDateTime` / `LocalDate` parameters typed as `Date` in the type library |
+| `Currency`, `Decimal` | `java.math.BigDecimal` | in: a `Double` (precision lost) | `Decimal` (VT_DECIMAL) ↔ `BigDecimal` both ways |
+| `Byte()` (VT_UI1 array) | `byte[]` | in: any numeric array; out: a variant array of numbers | out as a real `Byte()` array: binary data for VBA (files, images) |
+| `long` in VBScript | `long` | late binding: I4 when it fits; early binding: always VT_I8, which VBScript can't use | decide whether early-bound `long` results also go out as I4/R8 `VARIANT`s (decision 4) |
+| 2-D `SAFEARRAY` | `Object[][]` | late binding: in as `Object[][]` (an Excel range); out: nested 1-D arrays; early binding: an error (`JrVarToObjectArray` takes 1-D only) | 2-D both ways in both bindings, so `Range.Value = javaResult` works: the most common VBA data shape |
+
+Each mapping is a change in `JavaToVariant` / `JavaFromVariant` (late binding) and in
+`ctype` / `argIn` / `assignOut` (early binding), tested in Delphi and from VBA.
+
+### 3d. Out-of-process server (decision 1, revisited)
+
+The in-process DLL was decision 1, and it stays the default. It has three hard limits that only an
+out-of-process server removes:
+
+- **Bitness**: 32-bit Office (still common in companies) needs a 32-bit JVM, and JDK 24 removed
+  the 32-bit Windows port. The newest 32-bit JDKs are 17 to 23. A 64-bit EXE server lets 32-bit
+  clients use a current 64-bit JDK.
+- **One JVM per process, forever**: an Excel session can't switch class paths or restart the JVM.
+- **Isolation**: a JVM crash (or `System.exit`) takes the host down.
+
+Plan: `<unit>ComServerExe.dpr` (generated) and `PascalJavaBridgeComExe.dpr`.
+- `CoRegisterClassObject` with `REGCLS_MULTIPLEUSE`, a message loop on an STA thread, exit when
+  the last object is released, and `/regserver` / `/unregserver` / `/regserver /user`.
+- Marshalling of the dual interfaces through the type library marshaler: interfaces registered
+  with `ProxyStubClsid32 = {00020424-0000-0000-C000-000000000046}` and the `oleautomation` flag.
+  All our types are automation types, so no `midl` proxy DLL is needed.
+- Callbacks: a COM object passed to `Implement` arrives as a proxy, so Java threads can call it
+  through COM (the owner-thread rule then only applies to in-process clients).
+- Cost: tens of µs per call instead of about 0.1 µs. A note in the README on batching (pass
+  arrays, not single values, in loops).
+- Tests: the same VBScript/PowerShell/C# scripts against the EXE (`LocalServer32`), plus a 32-bit
+  client (32-bit `cscript`) using the 64-bit server with JDK 25.
+
+### 3e. Events (optional)
+
+VBA's `WithEvents` needs connection points: a source interface in the type library and
+`IConnectionPointContainer` on the object. Java has no event model, but its listener pattern
+(`addFooListener(FooListener)`) does. A generator option could turn `addXListener` /
+`removeXListener` pairs into a source interface per listener type, with the class implementing
+`IConnectionPointContainer`. Typed callbacks (Part 2) already cover the same need with
+`Implements`, so this only pays off if users ask for `WithEvents`.
+
+### 3f. Smaller items
+
+- `ComWrap_Foo` makes one `IsInstance` call per candidate. For a widely implemented interface in
+  a large binding (`java.util.List` in `java.**`), cache per class: look up the run-time class
+  once (`GetObjectClass`, then compare global refs), and map it to the wrapper in a small hash
+  table.
+- Versioned ProgIDs (`PascalJavaBridge.JDemo.1`, plus `VersionIndependentProgID`) and a type
+  library version taken from the Maven project version, so a new build can be installed side by
+  side.
+- HKLM registration from an installer, documented: `regsvr32` elevated, or `DllRegisterServer`
+  from a setup tool. Tests keep using HKCU.
+- FPC: the COM units are Delphi only (`System.Win.ComObj`, `DispInvoke`). An FPC port of
+  `JavaBridgeCom` is possible (FPC has `ComObj` and variants) but not needed for any client.
+- FPC i386-win32 has not been tested (only the x86_64 FPC is installed here).
+
+### Suggested order
+
+3a first: it is small and removes the most likely first failure for Office users. Then 3b and
+the Date/Decimal/byte/2-D array mappings of 3c, which are what VBA code needs most. Then 3d if
+32-bit Office with a current JDK, or isolation, is a requirement. 3e only on demand. 3f items
+whenever the files are touched anyway.
+
 ## Open decisions (for the user)
 
 1. **In-process DLL vs out-of-process EXE server.** Decided: in-process DLL.
@@ -281,10 +395,22 @@ Nothing is left open for Part 2.
      (e.g. Excel): only one JVM per process, the JVM's bitness must match the host's (64-bit
      Office needs a 64-bit JDK), and a JVM crash kills the host.
    - Out-of-proc: isolates the JVM. Calls are marshalled across processes (tens of µs each).
+   For Part 3: keep the DLL as the default, and decide whether an EXE server (3d) is needed too:
+   yes if 32-bit Office must use a current (64-bit) JDK, or the JVM must not run inside Office.
 2. **Which clients matter most.** VBA/VBScript/PowerShell mainly need Part 1. C#/C++/VB6
    gain most from Part 2.
+3. **Default member of collections (3b).** `Item` (VBA-style `list(0)`, `map("k")`) or keep
+   `toString` (`MsgBox list`, `CStr(list)`). Recommendation: `Item` for `List`, `Map`,
+   `Collection`; `toString` stays the default for everything else.
+4. **`long` for VBScript (3c).** Keep `Int64` (exact; VBA 64-bit, C#, Delphi), or send `long`
+   results as `VARIANT` (I4 when it fits, else R8 or Decimal), which VBScript can use but which
+   loses the type for early-bound clients. Recommendation: keep `Int64` in early binding (VBScript
+   uses late binding, where `long` already becomes I4 when it fits).
+5. **Configuration file format (3a).** `.ini` (no parser needed, VBA users know it) or `.json`.
+   Recommendation: `.ini`.
 
 Recommendation: Step 0, then Part 1 (`TJavaDispatch` + `PascalJavaBridge.JVM`), then Part 2.
+For Part 3: 3a, then 3b and 3c, then 3d if decision 1 says so.
 
 ## Windows-specific reminders
 
