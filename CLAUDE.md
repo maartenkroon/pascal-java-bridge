@@ -83,6 +83,14 @@ mvn -B verify                                                              # Jav
   syntax, no macros.
 - Callbacks support Java interfaces only (Proxy).
 
+## Planned work
+
+- **COM / Automation for Delphi** (late binding via a generic `TJavaDispatch`, early binding via
+  generated dual interfaces and a type library): see [docs/com-automation.md](docs/com-automation.md).
+  It is a proposal, not implemented, and it starts with getting Delphi to compile the project at
+  all (step 0). The in-proc vs out-of-proc decision is still open.
+- Lazarus/FpDebug stops on the JVM's intentional `SIGSEGV`: README "Debugging in Lazarus".
+
 ## Maven / Eclipse
 
 - m2e can't resolve a Maven plugin built in the same workspace, so the plugin execution in
