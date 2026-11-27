@@ -2,7 +2,8 @@
 
 Status: written on 2026-11-27 so the work can continue on a Windows machine. Step 0 (Delphi
 compiles and passes the tests) is done. Part 1 is done, including the in-process COM server
-(decision 1: DLL). Part 2 is not started.
+(decision 1: DLL). Part 2 is working in single-unit mode (see its progress section); per-package
+mode is still open.
 
 ## Goal
 
@@ -137,7 +138,7 @@ A new generator option (e.g. `--com`, Maven `<com>true</com>`) that additionally
 | `float` / `double` | `Single` / `Double` |
 | `boolean` | `WordBool` (VARIANT_BOOL) |
 | `byte` | `SmallInt` (COM `Byte` is unsigned) |
-| `char` | `SmallInt` (or a 1-char `WideString`) |
+| `char` | a 1-char `WideString` (implemented; `SmallInt` was the alternative) |
 | `String` | `WideString` (BSTR) |
 | arrays | `SAFEARRAY` in `OleVariant` |
 | wrapped type `Foo` | `IJFooDisp` |
@@ -159,6 +160,36 @@ A new generator option (e.g. `--com`, Maven `<com>true</com>`) that additionally
   stable across regenerations.
 - **Lifetime**: COM reference counting maps directly onto the existing global-ref wrappers.
 - **Threads**: apartment threading model. JNI auto-attach (daemon) handles any COM thread.
+
+**Progress (2026-11-27):** `--com` (Maven `<com>true</com>`) in single-unit mode, in
+`generator/.../ComGenerator.java` and `runtime/JavaBridgeAuto.pas`. Decisions and differences
+from the plan above:
+
+- Type library: option **(b)**, built through `ICreateTypeLib2`. The generated unit holds a
+  description (`B.AddInterface` / `B.AddFunc` calls) that is built in memory for `IDispatch`, and
+  written and registered as `<server>.tlb` on registration. `TJavaAutoObject` (not
+  `TAutoIntfObject`) implements `IDispatch` with `DispInvoke` on the vtable half of each dual
+  interface, so names, properties and argument coercion come from the type library.
+- `char` is a one-character `WideString` rather than `SmallInt`. `Object` and unwrapped types are
+  `VARIANT`, converted like late binding (numbers and strings by value, objects as
+  `TJavaDispatch`).
+- Unique names: overloads are ordered by parameter count, then by usual types first, so the
+  simplest overload keeps the plain name. Fields are properties (`Get_x`/`Set_x` in Delphi).
+- Additions: `Object.toString` is DISPID 0 (default member); `_NewEnum` on `Iterable`/`Map`/
+  `Iterator`/`Enumeration`; `IJFooClass.Implement(comObject)` for callbacks, typed as
+  `IJFooDisp`; the entry has `Start`, `Running` and `JvmPath`.
+- Generated server: `<unit>ComServer.dpr`, using the generic `JavaComClassObject` /
+  `JavaComRegisterServer` from `JavaBridgeAuto`.
+- Threading model `Both`, like the late-bound server.
+- Tests: `TestComEarly.pas` (47, in process). With `-Dcom.scripts`, the registered server is
+  tested from VBScript (8) and from PowerShell and C# (23): the C# client is compiled against an
+  interop assembly that .NET's `TypeLibConverter` makes from the registered `.tlb`, and it calls
+  through the vtables.
+
+Still open for Part 2: `--com` with `--unit-per-package` (one type library over several units);
+early-bound callbacks with typed COM interfaces (now `Implement` takes any `IDispatch`); 32-bit;
+VBA in Office; and returning the most specific wrapper for a result's run-time class (now the
+declared type is used; `Cast` converts).
 
 ## Open decisions (for the user)
 

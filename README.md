@@ -25,6 +25,7 @@ A Maven multi-module project (JDK 17+ to run the generator, built and tested wit
 | `runtime/JavaBridgeHandler.inc` | Embedded bytecode of the callback handler (written by the `handler` module) |
 | `runtime/JavaBridgeCom.pas` | Delphi only: late-bound COM Automation (`IDispatch`) access to Java objects |
 | `runtime/JavaBridgeDynamic.inc` | Embedded bytecode of `DynamicInvoker`, the Java side of `JavaBridgeCom` |
+| `runtime/JavaBridgeAuto.pas` | Delphi only: type library builder and base class for the generated early-bound COM wrappers (`--com`) |
 | `handler/` | `PascalInvocationHandler` (Java side of callbacks), `DynamicInvoker` (Java side of COM), and the tool that writes the `.inc` files |
 | `generator/` | `BindingGenerator`: executable jar, also contains the Pascal runtime |
 | `maven-plugin/` | `pascal-java-bridge:generate` goal for use in Maven projects |
@@ -49,9 +50,10 @@ With `-Dfpc.executable`, the `tests` module:
 
 With `-Ddcc.executable` (profile `delphi-tests`) it does the same with Delphi, in
 `tests/target/delphi` (warnings are not errors there), and also compiles and runs `TestCom.pas`
-(the COM late binding) and builds the COM server DLL. Add `-Dcom.scripts` to also test the DLL
-from VBScript, JScript and PowerShell (`src/test/script`). That registers it for the current
-user and unregisters it again. Both properties can be set in one build.
+(the COM late binding) and `TestComEarly.pas` (the generated early binding, `JDemoCom`), and
+builds both COM server DLLs. Add `-Dcom.scripts` to also test the DLLs from VBScript, JScript,
+PowerShell and C# (`src/test/script`). That registers them for the current user and
+unregisters them again. Both properties can be set in one build.
 
 A failing test fails the build. Use `-DskipTests` to compile without running.
 
@@ -104,6 +106,7 @@ its runtime dependencies, so nothing has to be listed by hand.
 | `outputDirectory` | `target/generated-sources/pascal` | |
 | `withRuntime` | `true` | also write the runtime there (`JavaBridge.pas`, `JavaBridgeCom.pas` and their `.inc` files) |
 | `unitPerPackage` | `false` | one unit per Java package, see [Large selections](#large-selections-one-unit-per-package) (`-Dpascal.unitPerPackage`) |
+| `com` | `false` | Delphi: also write `<unit>Com.pas` and `<unit>ComServer.dpr`, see [early binding](#com-automation-early-binding-generated-delphi) (`-Dpascal.com`) |
 | `skip` | `false` | `-Dpascal.skip` |
 
 ### From the command line
@@ -137,6 +140,8 @@ Arguments are class names or wildcard patterns (quote them so the shell doesn't 
 * `--with-runtime` also writes the runtime (`JavaBridge.pas`, `JavaBridgeCom.pas` and their `.inc`
   files) to `--out`.
 * `--unit-per-package` splits the output into one unit per Java package (see below).
+* `--com` (Delphi) also writes early-bound COM Automation wrappers, see
+  [COM Automation, early binding](#com-automation-early-binding-generated-delphi).
 
 `java.lang.Object` is always included. Types that are not wrapped show up as `IJavaObject`;
 add them to the selection to get typed wrappers.
@@ -405,6 +410,76 @@ How calls work:
 `TJavaDispatch.Create(obj)` wraps an existing `IJavaObject` (such as a generated wrapper) for COM,
 and `JavaToVariant` / `JavaFromVariant` do the conversions above.
 
+## COM Automation, early binding (generated, Delphi)
+
+With `--com` (Maven: `<com>true</com>`), the generator also writes `<unit>Com.pas` and
+`<unit>ComServer.dpr` (single-unit mode only, for now). Together they make a COM server with a
+type library, for clients that bind early: C#, VB6, C++, VBA with a reference, and PowerShell
+(which needs type info for properties).
+
+What is generated, per Java type `Foo`:
+
+| Name | What |
+|---|---|
+| `IJFooDisp` | dual interface (vtable and `IDispatch`) with the instance members; same parent chain as `IJFoo` |
+| `IJFooClass` | constructors (`New`, `New_1`, ...), static methods, static fields, `Cast`, `IsInstance`, and `Implement` for interfaces with abstract methods |
+| `TJFooAuto`, `TJFooClassAuto` | the implementing classes, which delegate to `IJFoo` / `TJFoo` |
+
+Per unit, there is an entry interface `I<unit>Entry` (coclass `<unit>`, ProgID
+`PascalJavaBridge.<unit>`). It has `Start(classPath, options)`, `Running` and `JvmPath`, plus one
+property per type that returns its class object:
+
+```vb
+Set jdemo = CreateObject("PascalJavaBridge.JDemo")
+jdemo.Start "demo.jar", ""
+Set t = jdemo.Torture.New()
+t.counter_1 = 5                         ' a field is a property
+MsgBox jdemo.Greeter.add(40, 2) & " " & t.over_3(1)
+```
+
+```csharp
+// C#: reference the registered type library (or tlbimp JDemoComServer.tlb)
+var jdemo = (IJDemoEntry)Activator.CreateInstance(Type.GetTypeFromProgID("PascalJavaBridge.JDemo"));
+IJTortureDisp t = jdemo.Torture.New();
+string s = t.over_3(1);
+```
+
+From Delphi, without registration, use `JDemoComEntry` (the generated function) and the
+interfaces directly.
+
+Rules:
+
+* **Names**: COM has no overloads, so every member gets a unique name per interface chain:
+  `over`, `over_1`, ... The simplest overload gets the plain name. Overloads are ordered by
+  parameter count, then by the parameter types (`String`, `int`, `long`, `double`, `boolean`,
+  objects, `float`, `char`, `short`, `byte`, arrays), so `List.add(E)` is `add` and
+  `add(int, E)` is `add_1`, and `StringBuilder.append(String)` is `append`. Names of `IUnknown`
+  and `IDispatch` methods are renamed (`Invoke_1`). A field becomes a property; when a method has
+  the same name, the property gets the suffix (Torture's `counter` and `counter_1`).
+* **Types**: `boolean` is `WordBool`; `byte` and `short` are `SmallInt`; `char` is a
+  one-character `WideString`; `int` is `Integer`; `long` is `Int64`; `float` is `Single`; `double`
+  is `Double`; `String` is `WideString`. A wrapped type `Foo` is `IJFooDisp`. Arrays, `Object` and
+  other unwrapped types are `OleVariant`, converted as for late binding, so `map.get("k")` gives
+  the value itself.
+* `Object.toString` is the default member (DISPID 0), and every `Iterable`, `Map`, `Iterator` and
+  `Enumeration` has `_NewEnum`, so For Each works.
+* Java exceptions become COM errors through `IErrorInfo` (source: the Java class), so C# gets a
+  `COMException` and Delphi an `EOleException`.
+* **Type library**: built at run time through `ICreateTypeLib2` (unit `JavaBridgeAuto`). `IDispatch`
+  uses the in-memory copy. Registering the server writes `<server>.tlb` next to the DLL and
+  registers it. No `midl` or other tools are needed, and the generator still runs on any OS.
+* **Callbacks**: `IJRunnableClass.Implement(comObject)` returns an `IJRunnableDisp` whose calls go
+  to the COM object by name, as with late binding.
+
+Build and register the server like the late-bound one:
+
+```
+dcc64 -NSSystem -U<generated dir> -I<generated dir> <generated dir>\JDemoComServer.dpr
+regsvr32 /n /i:user JDemoComServer.dll
+```
+
+GUIDs are name-based (unit and class names), so they stay the same across regenerations.
+
 ## Runtime notes
 
 * **FPU exceptions**: the JVM requires masked floating point exceptions. `JavaStartVM` masks
@@ -436,9 +511,10 @@ and `JavaToVariant` / `JavaFromVariant` do the conversions above.
 * Tested with **Delphi 11** (dcc64) on Windows x64 and **JDK 25**: the same 75 tests pass, with
   `-Xcheck:jni`, in both layouts. The test program also compiles with dcc32 (not run: no
   32-bit JVM). Run them with `mvn verify -Ddcc.executable=dcc64` (profile `delphi-tests`).
-  That profile also runs `TestCom` (65 tests of the COM late binding, under `-Xcheck:jni`).
-  With `-Dcom.scripts`, the COM server passes its VBScript (20), JScript (7) and PowerShell (8)
-  tests.
+  That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (47
+  tests of the generated early binding), under `-Xcheck:jni`. With `-Dcom.scripts`, the
+  late-bound server passes its VBScript (20), JScript (7) and PowerShell (8) tests, and the
+  generated server its VBScript (8) and PowerShell + C# (23) tests.
   FPC on Windows has not been tested.
 * Callbacks can implement Java **interfaces** only, not abstract classes
   (`java.lang.reflect.Proxy` cannot extend classes).

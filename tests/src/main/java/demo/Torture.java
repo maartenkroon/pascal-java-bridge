@@ -39,6 +39,9 @@ public class Torture extends Base implements Runnable {
     // overloaded runtime member names that generated code calls: the overload is renamed
     public int JavaGlobalRef(int n) { return 10 + n; }
     public int CreateFromLocal(int n) { return 11 + n; }
+    // IUnknown/IDispatch method names: renamed in the COM interfaces (--com) only
+    public int Invoke() { return 19; }
+    public int Release() { return 20; }
 
     // --- case-only differences (Pascal is case-insensitive)
     public String getUrl() { return "getUrl"; }

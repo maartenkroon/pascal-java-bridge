@@ -229,19 +229,26 @@ public final class BindingGenerator {
          * code to one unit per Java package, named {@code <unit>_<package>} (e.g. JJava_java_util).
          */
         public boolean unitPerPackage;
+        /**
+         * Also write {@code <unit>Com.pas} (Delphi only): early-bound COM Automation wrappers, the type
+         * library description, and the COM server project {@code <unit>ComServer.dpr}.
+         */
+        public boolean com;
         public java.util.function.Consumer<String> info = System.out::println;
         public java.util.function.Consumer<String> warn = m -> System.err.println("warning: " + m);
     }
 
     /** Runtime files shipped in the generator jar (see generator/pom.xml). */
     public static final List<String> RUNTIME_FILES = List.of("JavaBridge.pas", "JavaBridgeHandler.inc",
-            "JavaBridgeCom.pas", "JavaBridgeDynamic.inc");
+            "JavaBridgeCom.pas", "JavaBridgeDynamic.inc", "JavaBridgeAuto.pas");
 
     /** Generates the unit(s); returns the path of the written .pas file (the types unit). */
     public static Path generate(Options o) throws Exception {
         if (o.unit == null || !o.unit.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))
             throw new IllegalArgumentException("Invalid or missing unit name: " + o.unit);
         if (o.includes.isEmpty()) throw new IllegalArgumentException("No classes or patterns given");
+        if (o.com && o.unitPerPackage)
+            throw new IllegalArgumentException("--com is not supported with --unit-per-package yet");
         List<URL> urls = new ArrayList<>();
         for (Path p : o.classpath) urls.add(p.toUri().toURL());
         // parent = platform loader: only the JDK and the given classpath are visible, never the
@@ -266,6 +273,13 @@ public final class BindingGenerator {
                 writeIfChanged(file, g.emitTypesUnit());
                 o.info.accept("Wrote " + file + " and " + g.units.size() + " package units to "
                         + o.outputDirectory + " (" + g.types.size() + " Java types)");
+            }
+            if (o.com) {
+                ComGenerator cg = new ComGenerator(g);
+                Path com = o.outputDirectory.resolve(o.unit + "Com.pas");
+                writeIfChanged(com, cg.emit());
+                writeIfChanged(o.outputDirectory.resolve(o.unit + "ComServer.dpr"), cg.emitServer());
+                o.info.accept("Wrote " + com + " and " + o.unit + "ComServer.dpr (COM Automation)");
             }
             if (o.withRuntime) writeRuntime(o.outputDirectory);
             return file;
@@ -307,6 +321,7 @@ public final class BindingGenerator {
                 case "--exclude" -> o.excludes.add(args[++i]);
                 case "--with-runtime" -> o.withRuntime = true;
                 case "--unit-per-package" -> o.unitPerPackage = true;
+                case "--com" -> o.com = true;
                 case "-h", "--help" -> { usage(); return; }
                 default -> o.includes.add(args[i]);
             }
@@ -319,7 +334,7 @@ public final class BindingGenerator {
         System.err.println("""
                 usage: java -jar pascal-java-bridge-generator.jar --unit <PascalUnitName> [--out <dir>]
                          [--cp <classpath>] [--depth <n>] [--exclude <pattern>]... [--with-runtime]
-                         [--unit-per-package] <pattern>...
+                         [--unit-per-package] [--com] <pattern>...
 
                   <pattern>       a class name (java.util.ArrayList, java.util.Map$Entry) or a
                                   wildcard pattern:
@@ -335,7 +350,10 @@ public final class BindingGenerator {
                   --unit-per-package
                                   write the interface types to <PascalUnitName> and the records
                                   and implementation code to one unit per Java package, named
-                                  <PascalUnitName>_<package> (e.g. JJava_java_util)""");
+                                  <PascalUnitName>_<package> (e.g. JJava_java_util)
+                  --com           (Delphi) also write <PascalUnitName>Com.pas, early-bound COM
+                                  Automation wrappers with a type library, and the COM server
+                                  project <PascalUnitName>ComServer.dpr""");
     }
 
     // ------------------------------------------------------------------ collection

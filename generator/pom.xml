@@ -26,6 +26,7 @@
           <include>JavaBridgeHandler.inc</include>
           <include>JavaBridgeCom.pas</include>
           <include>JavaBridgeDynamic.inc</include>
+          <include>JavaBridgeAuto.pas</include>
         </includes>
       </resource>
     </resources>

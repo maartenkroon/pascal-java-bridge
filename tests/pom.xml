@@ -94,6 +94,10 @@
                 <goals>
                   <goal>generate</goal>
                 </goals>
+                <configuration>
+                  <!-- also JDemoCom.pas and JDemoComServer.dpr (Delphi COM Automation) -->
+                  <com>true</com>
+                </configuration>
               </execution>
               <execution>
                 <id>unit-per-package</id>
@@ -304,6 +308,67 @@
                 </configuration>
               </execution>
               <execution>
+                <id>dcc-compile-com-early</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${dcc.executable}</executable>
+                  <workingDirectory>${delphi.dir}/single</workingDirectory>
+                  <arguments>
+                    <argument>-B</argument>
+                    <argument>-Q</argument>
+                    <argument>-NSSystem</argument>
+                    <argument>-NU${delphi.dir}/single</argument>
+                    <argument>-E${delphi.dir}/single</argument>
+                    <argument>-U${pascal.generated.dir}</argument>
+                    <argument>${project.basedir}/src/test/pascal/TestComEarly.pas</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
+                <id>delphi-test-com-early</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skipTests}</skip>
+                  <executable>${delphi.dir}/single/TestComEarly.exe</executable>
+                  <arguments>
+                    <argument>--checkjni</argument>
+                    <argument>--classpath</argument>
+                    <argument>${project.build.outputDirectory}</argument>
+                  </arguments>
+                  <environmentVariables>
+                    <JAVA_HOME>${java.home}</JAVA_HOME>
+                  </environmentVariables>
+                </configuration>
+              </execution>
+              <execution>
+                <!-- the generated server of JDemoCom (early binding) -->
+                <id>dcc-compile-jdemo-com-server</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${dcc.executable}</executable>
+                  <workingDirectory>${delphi.dir}/jdemo-comserver</workingDirectory>
+                  <arguments>
+                    <argument>-B</argument>
+                    <argument>-Q</argument>
+                    <argument>-NSSystem</argument>
+                    <argument>-NU${delphi.dir}/jdemo-comserver</argument>
+                    <argument>-E${delphi.dir}/jdemo-comserver</argument>
+                    <argument>-U${pascal.generated.dir}</argument>
+                    <argument>-I${pascal.generated.dir}</argument>
+                    <argument>${pascal.generated.dir}/JDemoComServer.dpr</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
                 <id>dcc-compile-com-server</id>
                 <phase>test-compile</phase>
                 <goals>
@@ -369,9 +434,10 @@
         </plugins>
       </build>
     </profile>
-    <!-- Test the COM server (built by delphi-tests) from VBScript, JScript and PowerShell. It
-         registers the DLL for the current user (HKCU) and unregisters it afterwards, so it only
-         runs on request: -Ddcc.executable=dcc64 -Dcom.scripts -->
+    <!-- Test the COM servers (built by delphi-tests) from VBScript, JScript, PowerShell and C#:
+         PascalJavaBridgeCom.dll (late binding) and the generated JDemoComServer.dll (early
+         binding). It registers the DLLs for the current user (HKCU) and unregisters them
+         afterwards, so it only runs on request: -Ddcc.executable=dcc64 -Dcom.scripts -->
     <profile>
       <id>com-script-tests</id>
       <activation>
@@ -403,6 +469,7 @@
                     <argument>${project.build.directory}/delphi/comserver/PascalJavaBridgeCom.dll</argument>
                     <argument>${project.build.outputDirectory}</argument>
                     <argument>${java.home}/bin/server/jvm.dll</argument>
+                    <argument>${project.build.directory}/delphi/jdemo-comserver/JDemoComServer.dll</argument>
                   </arguments>
                 </configuration>
               </execution>

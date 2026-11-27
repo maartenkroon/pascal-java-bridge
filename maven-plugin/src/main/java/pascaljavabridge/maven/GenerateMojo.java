@@ -65,7 +65,7 @@ public class GenerateMojo extends AbstractMojo {
             defaultValue = "${project.build.directory}/generated-sources/pascal")
     private File outputDirectory;
 
-    /** Also write the Pascal runtime (JavaBridge.pas, JavaBridgeCom.pas and their .inc files) to the output directory. */
+    /** Also write the Pascal runtime (JavaBridge.pas, JavaBridgeCom.pas, JavaBridgeAuto.pas, .inc files) to the output directory. */
     @Parameter(property = "pascal.withRuntime", defaultValue = "true")
     private boolean withRuntime;
 
@@ -75,6 +75,13 @@ public class GenerateMojo extends AbstractMojo {
      */
     @Parameter(property = "pascal.unitPerPackage", defaultValue = "false")
     private boolean unitPerPackage;
+
+    /**
+     * Also write {@code <unit>Com.pas} (Delphi only): early-bound COM Automation wrappers with a
+     * type library, and the COM server project {@code <unit>ComServer.dpr}.
+     */
+    @Parameter(property = "pascal.com", defaultValue = "false")
+    private boolean com;
 
     /** Skip this goal. */
     @Parameter(property = "pascal.skip", defaultValue = "false")
@@ -97,6 +104,7 @@ public class GenerateMojo extends AbstractMojo {
         o.depth = depth;
         o.withRuntime = withRuntime;
         o.unitPerPackage = unitPerPackage;
+        o.com = com;
         o.info = getLog()::info;
         o.warn = getLog()::warn;
         try {

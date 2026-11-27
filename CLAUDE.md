@@ -52,9 +52,20 @@ mvn -B verify                                                              # Jav
   value conversion for COM). It uses `MethodHandles.publicLookup()` with the accessible
   reference class (so public methods of non-public classes work) and `asFixedArity()` (it packs
   varargs itself).
-- `generator/`: `pascaljavabridge.BindingGenerator`, a single file (~1,400 lines). It is both the
-  CLI (`main`) and the API (`Options`, `generate`) the Maven plugin uses. The jar bundles the
-  runtime files as resources (`pascaljavabridge/runtime/`).
+- `runtime/JavaBridgeAuto.pas` (Delphi only): `TJavaTypeLibBuilder` (type library from a
+  description, through `ICreateTypeLib2`: in memory or as .tlb), `TJavaAutoObject` (base of the
+  generated automation classes: `IDispatch` via `DispInvoke` on the vtable half of the dual
+  interface, `SafeCallException` -> `IErrorInfo`), array/char helpers, and the COM server helpers
+  (`JavaComClassObject`, `JavaComRegisterServer`). ICreateTypeLib2 gotchas: `SetTypeFlags(FDUAL)`
+  only after `AddImplType`; `SetFuncAndParamNames` wants a name for the retval too; never pass an
+  interface variable as both `Self` and `out` argument (Delphi clears the `out` first).
+- `generator/`: `pascaljavabridge.BindingGenerator` (~1,500 lines). It is both the CLI (`main`)
+  and the API (`Options`, `generate`) the Maven plugin uses. The jar bundles the runtime files as
+  resources (`pascaljavabridge/runtime/`). `ComGenerator` (same package) writes the `--com`
+  output from BindingGenerator's model (after `assignNames`): its own `Scope` (outer = the global
+  one), a COM `Table` per interface chain (unique names, `claimProperty` also claims
+  `Get_`/`Set_`, DISPIDs), `C_n` implementing methods mapped by resolution clauses. The Delphi
+  interface order must equal the `AddFunc` order (vtable). Single-unit mode only so far.
 - `comserver/PascalJavaBridgeCom.dpr`: Delphi in-process COM server (hand-written class factory
   and `DllRegisterServer`/`DllInstall`, no TComObject/type library). CLSID is name-based
   (`pascal-java-bridge-com-clsid:PascalJavaBridge.JVM`); keep it stable. PowerShell sees no
@@ -62,7 +73,10 @@ mvn -B verify                                                              # Jav
 - `maven-plugin/`: `GenerateMojo` (`pascal-java-bridge:generate`, phase `process-classes`).
 - `tests/`: demo Java classes (`demo.*`: `Torture` covers name collisions, `CallbackHost`
   covers callbacks) and `src/test/pascal/TestBindings.pas`; `TestCom.pas` (Delphi) tests
-  JavaBridgeCom through `OleVariant` late binding, without COM registration.
+  JavaBridgeCom through `OleVariant` late binding, without COM registration; `TestComEarly.pas`
+  tests the generated `JDemoCom` (the single-unit `JDemo` is generated with `<com>true</com>`).
+  `src/test/script/TestComEarly.ps1` converts the registered .tlb with .NET's `TypeLibConverter`
+  (no tlbimp needed) and compiles a C# early-bound client with `Add-Type`.
 
 ## Generated code model (keep these invariants)
 

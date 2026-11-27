@@ -75,6 +75,13 @@ function JavaFromVariant(const V: OleVariant): IJavaObject;
   into this unit. }
 procedure JavaComReleasePending;
 
+{ A Java proxy for the Java interface IfaceName whose methods call Disp (see
+  Implement above). }
+function JavaComImplement(const IfaceName: UnicodeString; const Disp: IDispatch): IJavaObject;
+
+{ An IEnumVARIANT over an Iterable, Iterator, Enumeration, Map or array. }
+function JavaComEnum(const Obj: IJavaObject): IUnknown;
+
 implementation
 
 uses
@@ -985,7 +992,7 @@ begin
     for I := VarArrayLowBound(V, 1) to VarArrayHighBound(V, 1) do
       AddOptions(V[I], Opts);
   end
-  else if not (VarIsNull(V) or VarIsEmpty(V)) then
+  else if not (VarIsNull(V) or VarIsEmpty(V)) and (VarToStr(V) <> '') then
     Opts := Opts + [VarToStr(V)];
 end;
 
@@ -1080,6 +1087,16 @@ end;
 function JavaComJVM: IDispatch;
 begin
   Result := TJavaComEntry.Create;
+end;
+
+function JavaComImplement(const IfaceName: UnicodeString; const Disp: IDispatch): IJavaObject;
+begin
+  Result := ImplementInterface(IfaceName, Disp);
+end;
+
+function JavaComEnum(const Obj: IJavaObject): IUnknown;
+begin
+  Result := TJavaEnum.Create(DynObj(dfIterator, [JV(JrHandle(Obj))])) as IEnumVARIANT;
 end;
 
 initialization
