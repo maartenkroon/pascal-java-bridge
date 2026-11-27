@@ -108,7 +108,7 @@ current user, runs them, and unregisters (`-Dcom.scripts`). Found on the way:
   would fix this.
 
 Not tested at first (see Part 2 for the VBA test added later): VBA in Office
-and a 32-bit build (no 32-bit JDK here). VBA uses the same IDispatch calls as VBScript.
+and a 32-bit build (both done later, see Part 2). VBA uses the same IDispatch calls as VBScript.
 
 ## Part 2: early binding (generated)
 
@@ -254,7 +254,25 @@ from an ordinary PowerShell window (`mvn -B verify "-Ddcc.executable=dcc64" "-Dc
 "-Dcom.vba"`, quoted: PowerShell splits an unquoted `-Da.b=c` at the dot), all tests pass, VBA
 included (Microsoft 365 Access, 64-bit).
 
-Still open for Part 2: 32-bit.
+32-bit (2026-11-27): Delphi 11 dcc32 with a 32-bit Temurin 17.0.16 JRE (JDK 24 and later have no
+32-bit Windows build; the bytecode targets Java 17). Maven profile `delphi32-tests`
+(`-Djvm32.home=...`) runs `tests/src/test/script/RunDelphi32.ps1`: all test programs in both
+layouts, both COM servers, and with `-Dcom.scripts` the script tests through the 32-bit hosts. All
+pass. Two bugs that 64-bit hid:
+
+- The JVM crashed at start-up in `jimage.dll` (a call through nil). `jimage.dll` loads `zip.dll`
+  by name, and `zip.dll` imports `java.dll` by name. `java.exe` finds them in its own directory,
+  but a host program finds whatever comes first on the PATH, here JDK 25's 64-bit DLLs. The
+  runtime now loads the JDK's own `java.dll` and `zip.dll` by full path after `jvm.dll`, so the
+  by-name loads return those. This also matters on 64-bit when another JDK is earlier on the
+  PATH than the one being used.
+- The generated interfaces declared `[in] VARIANT` parameters as `const OleVariant`, which Delphi
+  passes by reference. COM passes them by value, which is 16 bytes on the Win32 stack (on Win64 a
+  pointer, so it matched there). `IDispatch` calls through `DispInvoke` failed with
+  `DISP_E_BADCALLEE`. They are now plain `OleVariant` value parameters, as in Delphi's own type
+  library imports.
+
+Nothing is left open for Part 2.
 
 ## Open decisions (for the user)
 

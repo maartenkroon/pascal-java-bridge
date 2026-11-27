@@ -340,7 +340,8 @@ For Each item In list : WScript.Echo item : Next
 ```
 
 The JVM runs inside the client process, so it must have the client's bitness: 64-bit `cscript`
-or Office needs a 64-bit JDK and a dcc64 build, 32-bit ones need dcc32 and a 32-bit JDK. There is
+or Office needs a 64-bit JDK and a dcc64 build, 32-bit ones need dcc32 and a 32-bit JDK (17 to
+23: JDK 24 removed the 32-bit Windows port). There is
 one JVM per process, and the DLL stays loaded once it is loaded. **PowerShell** binds COM
 properties only through type info, which this server doesn't have. Read properties and fields as
 methods (`$jvm.Running()`, `$jvm.Static("java.lang.Integer").MAX_VALUE()`) and set the JVM path
@@ -535,8 +536,13 @@ GUIDs are name-based (unit and class names), so they stay the same across regene
   * all of `java.**` (2,110 types, one unit per package) compiles
   * a 123-type JDK binding (42k lines, 67 callback interfaces) compiles without warnings
 * Tested with **Delphi 11** (dcc64) on Windows x64 and **JDK 25**: the same 75 tests pass, with
-  `-Xcheck:jni`, in both layouts. The test program also compiles with dcc32 (not run: no
-  32-bit JVM). Run them with `mvn verify -Ddcc.executable=dcc64` (profile `delphi-tests`).
+  `-Xcheck:jni`, in both layouts. Run them with `mvn verify -Ddcc.executable=dcc64` (profile
+  `delphi-tests`). **32-bit** (dcc32, a 32-bit Temurin 17 JRE): add
+  `-Djvm32.home=<32-bit JDK or JRE, 17 to 23>` (profile `delphi32-tests`,
+  `src/test/script/RunDelphi32.ps1`). That compiles and runs `TestBindings` (both layouts),
+  `TestCom` and `TestComEarly` (both layouts) as 32-bit programs and builds both COM servers. With
+  `-Dcom.scripts` it also runs the script tests through the 32-bit `cscript` and PowerShell. All
+  pass.
   That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (65
   tests of the generated early binding, in both layouts), under `-Xcheck:jni`. With `-Dcom.scripts`, the
   late-bound server passes its VBScript (20), JScript (7) and PowerShell (8) tests, and the

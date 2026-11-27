@@ -499,6 +499,57 @@
         </plugins>
       </build>
     </profile>
+    <!-- The 32-bit Delphi build and tests: -Djvm32.home=<32-bit JDK or JRE 17 to 23> (JDK 24 and
+         later have no 32-bit Windows build), dcc32 on the PATH or -Ddcc32.executable=<path>. With
+         -Dcom.scripts the COM script tests also run through the 32-bit script hosts. -->
+    <profile>
+      <id>delphi32-tests</id>
+      <activation>
+        <property>
+          <name>jvm32.home</name>
+        </property>
+      </activation>
+      <properties>
+        <dcc32.executable>dcc32</dcc32.executable>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>delphi32</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skipTests}</skip>
+                  <executable>powershell</executable>
+                  <arguments>
+                    <argument>-NoProfile</argument>
+                    <argument>-ExecutionPolicy</argument>
+                    <argument>Bypass</argument>
+                    <argument>-File</argument>
+                    <argument>${project.basedir}/src/test/script/RunDelphi32.ps1</argument>
+                    <argument>${dcc32.executable}</argument>
+                    <argument>${jvm32.home}</argument>
+                    <argument>${pascal.generated.dir}</argument>
+                    <argument>${pascal.generated.pp.dir}</argument>
+                    <argument>${project.basedir}/src/test/pascal</argument>
+                    <argument>${project.basedir}/../comserver/PascalJavaBridgeCom.dpr</argument>
+                    <argument>${project.build.directory}/delphi32</argument>
+                    <argument>${project.build.outputDirectory}</argument>
+                    <argument>${com.scripts}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <!-- Test the COM servers (built by delphi-tests) from VBScript, JScript, PowerShell and C#:
          PascalJavaBridgeCom.dll (late binding) and the generated JDemoComServer.dll (early
          binding). It registers the DLLs for the current user (HKCU) and unregisters them

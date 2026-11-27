@@ -26,6 +26,12 @@ mvn -B verify                                                              # Jav
   `tests/src/test/script/RunComScripts.ps1`: registers the COM server DLL for the current user,
   runs the .vbs/.js/.ps1 tests, always unregisters. Never leave it registered. Delphi source files
   without a BOM are read as ANSI: use `#$xxxx` for non-ASCII characters in string literals.
+- 32-bit: `-Djvm32.home=<32-bit JDK/JRE 17..23>` (profile `delphi32-tests`, `RunDelphi32.ps1`, dcc32,
+  output `tests/target/delphi32`; with `-Dcom.scripts` also the scripts via the 32-bit hosts). On
+  this machine a 32-bit Temurin 17 JRE comes with another product:
+  `C:\Program Files (x86)\Sparx Enterprise Architect MIM Add-In 32-bits\java\openjdk-17-32bits`
+  (use it read-only). JVM crashes write `hs_err_pid*.log` into the working directory: delete them.
+  In PowerShell, quote `-D` arguments (`"-Ddcc.executable=dcc64"`): unquoted, they're split at the dot.
 - Quick generator iteration: `mvn -q -B install -pl generator -Dmaven.install.skip=true`, then
   `java -jar generator/target/pascal-java-bridge-generator-0.1.0-SNAPSHOT.jar --unit X --out <dir> --with-runtime ...`
   and compile with `fpc.sh -vwn -Sew -FU<dir> -Fu<dir>`. Keep scratch output out of the repo.
@@ -134,6 +140,13 @@ mvn -B verify                                                              # Jav
 - FPU exceptions are masked per thread (the JVM needs it). FPC on Unix needs `cthreads` first in
   the program's `uses`.
 - The JVM uses SIGSEGV internally; signal handlers installed after `JavaStartVM` need `libjsig`.
+- Windows: `jimage.dll` loads `zip.dll` by name (which imports `java.dll` by name). A host program
+  doesn't have the JDK's `bin` as its directory, so another JDK on the PATH supplied them (32-bit
+  crash in jimage). `LoadJvmSymbol` preloads the JDK's own `java.dll` and `zip.dll` by full path,
+  after `jvm.dll`.
+- Win64 hides calling-convention bugs (one convention; structs > 8 bytes go by pointer). COM
+  `[in] VARIANT` must be a plain `OleVariant` value parameter, not `const` (by reference on Win32).
+  Test 32-bit after touching ABI-level code.
 
 ## Known issues / limits
 

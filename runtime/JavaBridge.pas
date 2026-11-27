@@ -541,6 +541,30 @@ begin
   {$ENDIF}
 end;
 
+{$IFDEF MSWINDOWS}
+{ The JVM's jimage.dll loads zip.dll by name. java.exe finds it in its own
+  directory (bin); a host program would find whatever zip.dll comes first on
+  the PATH, such as another JDK's (seen: a 64-bit one, so a 32-bit JVM crashed
+  in jimage at start-up). Loading the JDK's own zip.dll by full path first makes
+  the by-name load return it. zip.dll imports jvm.dll and java.dll by name, so
+  this runs after jvm.dll is loaded and loads java.dll (by full path) first. }
+procedure PreloadJdkZip(const JvmPath: string);
+var
+  Bin: string;
+
+  procedure Load(const Name: string);
+  begin
+    if FileExists(Bin + Name) then
+      {$IFDEF FPC}LoadLibrary(Bin + Name){$ELSE}SafeLoadLibrary(Bin + Name){$ENDIF};
+  end;
+
+begin
+  Bin := ExtractFilePath(ExcludeTrailingPathDelimiter(ExtractFilePath(JvmPath)));
+  Load('java.dll');
+  Load('zip.dll');
+end;
+{$ENDIF}
+
 function LoadJvmSymbol(const Path: string): Pointer;
 begin
   {$IFDEF FPC}
@@ -556,6 +580,9 @@ begin
   {$ENDIF}
   if Result = nil then
     raise EJavaError.CreateFmt('JNI_CreateJavaVM not found in %s', [Path]);
+  {$IFDEF MSWINDOWS}
+  PreloadJdkZip(Path);
+  {$ENDIF}
 end;
 
 procedure JavaStartVM(const LibJvmPath: string; const Options: array of string;

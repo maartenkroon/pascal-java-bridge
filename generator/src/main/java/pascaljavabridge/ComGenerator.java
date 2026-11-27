@@ -713,7 +713,10 @@ final class ComGenerator {
         List<String> ps = new ArrayList<>();
         for (int i = 0; i < f.params.size(); i++) {
             CType p = f.params.get(i);
-            ps.add((p.managed() ? "const " : "") + "p" + i + ": " + p.pas());
+            // [in] VARIANT is passed by value (16 bytes on the Win32 stack); Delphi passes a const
+            // OleVariant by reference, which only matches on Win64 (where COM passes a pointer too)
+            boolean byConst = p.managed() && !p.pas().equals("OleVariant");
+            ps.add((byConst ? "const " : "") + "p" + i + ": " + p.pas());
         }
         String params = ps.isEmpty() ? "" : "(" + String.join("; ", ps) + ")";
         String n = (owner == null ? "" : owner + ".") + name;

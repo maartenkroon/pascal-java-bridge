@@ -115,7 +115,7 @@ type
 
   TTypedComparator = class(TNoDispatch, IDispatch, IJComparatorCallbackDisp)
   public
-    function compare(const p0: OleVariant; const p1: OleVariant): Integer; safecall;
+    function compare(p0: OleVariant; p1: OleVariant): Integer; safecall;
   end;
 
   TTypedSource = class(TNoDispatch, IDispatch, IJCallbackHost_SourceCallbackDisp)
@@ -203,7 +203,7 @@ begin
   Result := Entry.List.Cast(A);
 end;
 
-function TTypedComparator.compare(const p0: OleVariant; const p1: OleVariant): Integer;
+function TTypedComparator.compare(p0: OleVariant; p1: OleVariant): Integer;
 begin
   Result := Integer(p1) - Integer(p0);   { descending }
 end;
