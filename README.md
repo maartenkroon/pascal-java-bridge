@@ -553,7 +553,8 @@ GUIDs are name-based (unit and class names), so they stay the same across regene
   model" option; no Office setting is changed. Run these registering tests from an ordinary
   terminal: a process of a packaged (MSIX) app has its own copy of `HKCU`, so Office, which COM
   starts outside that package, doesn't see the registration.
-  FPC on Windows has not been tested.
+  **FPC 3.2.4** on Windows x64 (`-Dfpc.executable=<path to fpc.exe>`) compiles both layouts with
+  `-Sew` and passes the same 75 tests; FPC for 32-bit Windows (i386-win32) has not been tested.
 * Callbacks can implement Java **interfaces** only, not abstract classes
   (`java.lang.reflect.Proxy` cannot extend classes).
 * A callback call (about 335 ns) goes through `Proxy` plus boxing. Generating a dedicated Java

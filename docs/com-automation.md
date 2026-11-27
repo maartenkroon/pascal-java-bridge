@@ -32,7 +32,7 @@ and keep working on FPC.
    `pascal-tests`, activated by a `dcc.executable` property).
 
 **Result (2026-11-27, Delphi 11 / dcc64, JDK 25, Windows 11 x64):** done, except FPC on Windows
-(not installed).
+(not installed then; FPC 3.2.4 x86_64-win64 passes both layouts since).
 
 1. Both layouts compile with dcc64; dcc32 compiles too (not run: no 32-bit JVM). Fixes: `PtrUInt`
    → `NativeUInt`, `overload; static;` directive order, string literals split at 250 elements,

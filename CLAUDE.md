@@ -19,7 +19,8 @@ mvn -B verify                                                              # Jav
   They run `TestBindings` twice, against the single-unit `JDemo` and the per-package `JDemo`
   (`-dUNIT_PER_PACKAGE`), with `--checkjni`. Every test must pass in both layouts; the output
   ends with `ALL TESTS PASSED`.
-- Windows machine: Delphi 11 (`dcc64`/`dcc32` on the PATH), JDK 25 in `C:\Software`, no FPC.
+- Windows machine: Delphi 11 (`dcc64`/`dcc32` on the PATH), JDK 25 in `C:\Software`, FPC 3.2.4
+  (x86_64-win64 only): `-Dfpc.executable=C:\fpcupdeluxe\fpc\bin\x86_64-win64\fpc.exe`.
   `mvn -B verify -Ddcc.executable=dcc64` (profile `delphi-tests`) does the same with Delphi,
   output in `tests/target/delphi/{single,per-package}`; it also runs `TestCom` (single layout) and `TestComEarly` (both).
   Both profiles can run in one build. `-Dcom.scripts` (profile `com-script-tests`) also runs
@@ -156,7 +157,7 @@ mvn -B verify                                                              # Jav
   Delphi differences found so far: no `PtrUInt` (use `NativeUInt`), directive
   order `overload; static;` (not `static; overload;`), string literals max 255 elements (`pasStr`
   splits them), `'lit' + AnsiChar` is a UnicodeString. No FPC-only syntax, no macros.
-  FPC on Windows has not been tested.
+  FPC 3.2.4 on Win64 passes too (both layouts); FPC i386-win32 has not been tested.
 - Callbacks support Java interfaces only (Proxy).
 
 ## Maven / Eclipse
