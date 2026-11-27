@@ -53,7 +53,8 @@ With `-Ddcc.executable` (profile `delphi-tests`) it does the same with Delphi, i
 (the COM late binding) and `TestComEarly.pas` (the generated early binding, `JDemoCom`), and
 builds both COM server DLLs. Add `-Dcom.scripts` to also test the DLLs from VBScript, JScript,
 PowerShell and C# (`src/test/script`). That registers them for the current user and
-unregisters them again. Both properties can be set in one build.
+unregisters them again. Add `-Dcom.vba` as well to test the generated server from VBA in
+Microsoft Access. All these properties can be set in one build.
 
 A failing test fails the build. Use `-DskipTests` to compile without running.
 
@@ -539,7 +540,13 @@ GUIDs are name-based (unit and class names), so they stay the same across regene
   That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (65
   tests of the generated early binding, in both layouts), under `-Xcheck:jni`. With `-Dcom.scripts`, the
   late-bound server passes its VBScript (20), JScript (7) and PowerShell (8) tests, and the
-  generated server its VBScript (10) and PowerShell + C# (29) tests.
+  generated server its VBScript (10) and PowerShell + C# (29) tests. `-Dcom.vba` (with
+  `-Dcom.scripts`) also runs `TestVba.ps1`: VBA in Microsoft Access (64-bit Office), early bound
+  through a reference to the registered type library (18 tests, `tests/src/test/vba`). Access is
+  used because it can be given VBA code without Excel's "Trust access to the VBA project object
+  model" option; no Office setting is changed. Run these registering tests from an ordinary
+  terminal: a process of a packaged (MSIX) app has its own copy of `HKCU`, so Office, which COM
+  starts outside that package, doesn't see the registration.
   FPC on Windows has not been tested.
 * Callbacks can implement Java **interfaces** only, not abstract classes
   (`java.lang.reflect.Proxy` cannot extend classes).

@@ -80,6 +80,12 @@ mvn -B verify                                                              # Jav
   through a cached `As_n` wrapper and `X_n_*` IDispatch methods (own type info, unknown names
   fall back to the object's interface with DISPID + `$01000000`). `subtypes` uses `implemented`.
   `RunComScripts.ps1` needs "ALL TESTS PASSED" in a script's output: cscript exits 0 on errors.
+- `-Dcom.vba` (with `-Dcom.scripts`): `TestVba.ps1` runs `tests/src/test/vba` in a hidden Access
+  (VBE + `References.AddFromFile`, no trust setting needed; `Application.Run` wants `[ref]` args).
+  The Claude desktop app is MSIX-packaged: processes started from it (this shell included, even
+  unsandboxed) write `HKCU` to a private copy, so COM servers they register are invisible to
+  Office, which COM starts outside the package. The user runs `-Dcom.vba` builds from their own
+  terminal; the other script tests work in-package because cscript/PowerShell run inside it too.
 - `comserver/PascalJavaBridgeCom.dpr`: Delphi in-process COM server (hand-written class factory
   and `DllRegisterServer`/`DllInstall`, no TComObject/type library). CLSID is name-based
   (`pascal-java-bridge-com-clsid:PascalJavaBridge.JVM`); keep it stable. PowerShell sees no

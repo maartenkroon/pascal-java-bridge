@@ -19,6 +19,8 @@
     <pascal.generated.dir>${project.build.directory}/generated-sources/pascal</pascal.generated.dir>
     <pascal.generated.pp.dir>${project.build.directory}/generated-sources/pascal-per-package</pascal.generated.pp.dir>
     <skipTests>false</skipTests>
+    <!-- with -Dcom.scripts: also test the generated server from VBA in Microsoft Access -->
+    <com.vba>false</com.vba>
   </properties>
 
   <!-- make the reactor build the plugin first -->
@@ -533,6 +535,7 @@
                     <argument>${project.build.outputDirectory}</argument>
                     <argument>${java.home}/bin/server/jvm.dll</argument>
                     <argument>${project.build.directory}/delphi/jdemo-comserver/JDemoComServer.dll</argument>
+                    <argument>${com.vba}</argument>
                   </arguments>
                 </configuration>
               </execution>

@@ -3,8 +3,9 @@
 #   <dll>        PascalJavaBridgeCom.dll (late binding): TestCom.vbs, TestCom.js, TestCom.ps1
 #   <earlyDll>   optional, a generated JDemoComServer.dll (early binding, type library):
 #                TestComEarly.vbs, TestComEarly.ps1 (PowerShell and C#)
-# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File RunComScripts.ps1 <dll> <classpath> <jvm.dll> [<earlyDll>]
-param([string]$Dll, [string]$ClassPath, [string]$JvmPath, [string]$EarlyDll)
+#   <vba>        optional, "true": also TestVba.ps1 (VBA in Microsoft Access) against <earlyDll>
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File RunComScripts.ps1 <dll> <classpath> <jvm.dll> [<earlyDll> [<vba>]]
+param([string]$Dll, [string]$ClassPath, [string]$JvmPath, [string]$EarlyDll, [string]$Vba)
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Invoke-Regsvr32([string]$File, [string[]]$Arguments) {
@@ -35,6 +36,10 @@ try {
         Invoke-TestScript cscript @("//nologo", "$here\TestComEarly.vbs", $ClassPath, $JvmPath)
         Invoke-TestScript powershell ($ps + @("$here\TestComEarly.ps1", $ClassPath, $JvmPath,
             [IO.Path]::ChangeExtension($EarlyDll, ".tlb")))
+        if ($Vba -eq "true") {
+            Invoke-TestScript powershell ($ps + @("$here\TestVba.ps1", $ClassPath, $JvmPath,
+                [IO.Path]::ChangeExtension($EarlyDll, ".tlb")))
+        }
     }
 } finally {
     foreach ($r in $registered) { Invoke-Regsvr32 $r @("/s", "/u", "/n", "/i:user") }

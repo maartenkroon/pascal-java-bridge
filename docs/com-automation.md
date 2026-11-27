@@ -107,7 +107,7 @@ current user, runs them, and unregisters (`-Dcom.scripts`). Found on the way:
   Reading members as methods works, so `JvmPath(path)` also sets the path. Part 2's type library
   would fix this.
 
-Not tested: VBA in Office (running VBA from a test needs Office's macro trust settings changed)
+Not tested at first (see Part 2 for the VBA test added later): VBA in Office
 and a 32-bit build (no 32-bit JDK here). VBA uses the same IDispatch calls as VBScript.
 
 ## Part 2: early binding (generated)
@@ -235,7 +235,26 @@ per candidate, which can add up for widely implemented interfaces in large bindi
 Found on the way: a VBScript or JScript run-time error stops the script but leaves `cscript`'s
 exit code at 0. `RunComScripts.ps1` now also requires "ALL TESTS PASSED" in each script's output.
 
-Still open for Part 2: 32-bit and VBA in Office.
+VBA (2026-11-27): `tests/src/test/script/TestVba.ps1` (`-Dcom.vba`) starts Access hidden through
+automation, creates a temporary database, adds a reference to the registered `.tlb`, adds
+`tests/src/test/vba/PjbTests.bas` and the class modules `PjbRunner` / `PjbListener` through
+`Application.VBE` (Access has no "Trust access to the VBA project object model" gate, unlike
+Excel and Word), and calls `PjbRunTests` with `Application.Run` (by-reference arguments:
+`[ref]` from PowerShell). `AutomationSecurity = low` applies to that session only. A 300 s limit
+and a cleanup of the Access process it started keep a VBA dialog from hanging the build. The 18
+checks cover `New JDemo.JDemo`, typed members, `LongLong`, arrays, `TypeOf ... Is`, For Each,
+the default member, late binding, VBA errors, and `Implements` of the callback interfaces.
+
+Found on the way: the Claude desktop app is an MSIX package, and every process started from it
+(the shell, `regsvr32`, `cscript`) writes `HKCU` into the package's private copy. The script
+tests passed because they ran inside that package too. Access is started by COM outside it, so
+it doesn't see the registration ("Class not registered"). Inside the session, the VBA test got
+as far as compiling the project with the reference and then failed at `New JDemo.JDemo`. Run
+from an ordinary PowerShell window (`mvn -B verify "-Ddcc.executable=dcc64" "-Dcom.scripts"
+"-Dcom.vba"`, quoted: PowerShell splits an unquoted `-Da.b=c` at the dot), all tests pass, VBA
+included (Microsoft 365 Access, 64-bit).
+
+Still open for Part 2: 32-bit.
 
 ## Open decisions (for the user)
 
