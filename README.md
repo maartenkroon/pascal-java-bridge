@@ -529,6 +529,20 @@ GUIDs are name-based (unit and class names), so they stay the same across regene
 * **Native library mode**: if the Pascal code is a library loaded by Java, call
   `JavaUseVM(vm)` from `JNI_OnLoad` instead of `JavaStartVM`.
 
+### Debugging in Lazarus
+
+Because the JVM raises `SIGSEGV` on purpose (from `JavaStartVM` on), the Lazarus debugger stops
+with **"External: SIGSEGV"**. That isn't a crash: the program runs fine without the debugger
+(**Run → Run without Debugging**, Shift+Ctrl+F9). Lazarus 4.x with FpDebug has no Signals page;
+FpDebug checks signals against the Language Exceptions ignore list instead:
+
+* when the dialog appears, tick the option to ignore this exception type and continue, or
+* **Tools → Options → Debugger → Language Exceptions → Add**, enter `External: SIGSEGV` (exactly,
+  with the space) and keep it ticked.
+
+The setting is IDE-wide: real access violations in your own code no longer stop the debugger
+either, so untick it while you're hunting one.
+
 ## Status and limitations
 
 * Tested with **FPC 3.2** on Linux x86-64 and **JDK 25**:
