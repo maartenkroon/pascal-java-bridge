@@ -19,6 +19,9 @@ mvn -B verify                                                              # Jav
   They run `TestBindings` twice, against the single-unit `JDemo` and the per-package `JDemo`
   (`-dUNIT_PER_PACKAGE`), with `--checkjni`. Every test must pass in both layouts; the output
   ends with `ALL TESTS PASSED`.
+- Windows machine: Delphi 11 (`dcc64`/`dcc32` on the PATH), JDK 25 in `C:\Software`, no FPC.
+  `mvn -B verify -Ddcc.executable=dcc64` (profile `delphi-tests`) does the same with Delphi,
+  output in `tests/target/delphi/{single,per-package}`. Both profiles can run in one build.
 - Quick generator iteration: `mvn -q -B install -pl generator -Dmaven.install.skip=true`, then
   `java -jar generator/target/pascal-java-bridge-generator-0.1.0-SNAPSHOT.jar --unit X --out <dir> --with-runtime ...`
   and compile with `fpc.sh -vwn -Sew -FU<dir> -Fu<dir>`. Keep scratch output out of the repo.
@@ -48,6 +51,9 @@ mvn -B verify                                                              # Jav
   first wrapped super-interface, root `IJavaObject`); record `TJFoo` (`New`, statics, `Cast`,
   `IsInstance`, `Implement`); class `TJFooImpl` with **one method resolution clause per name**
   (`function IJFoo.bar = J_7;`), mapping to overloaded `J_n` methods. FPC can't have one clause per overload.
+  Delphi binds only one overload per clause, so for overloaded names the clause is `{$IFDEF FPC}` and
+  Delphi gets `reintroduce; overload;` forwarders with the interface name (`delphiForwarders`).
+  `IMPL_MEMBERS` (`JavaGlobalRef`, `CreateFrom*`, called by bodies) are therefore never overloaded.
 - **No naming collisions, ever.** Pascal is case-insensitive. All identifiers go through `Scope.claim`
   (global) or `allocate` (per member table); keywords are escaped with `&`, and `RESERVED` holds runtime
   and System names. Use `_n` suffixes, `p`/`p_` parameter prefixes chosen per table, `_uXXXX`
@@ -79,8 +85,11 @@ mvn -B verify                                                              # Jav
 
 - FPC 3.2.2 crashes with an internal error (`EListError: List index exceeds bounds (-1)`) on huge
   single units (e.g. `java.**`, 430k lines). This is a compiler bug; `--unit-per-package` avoids it.
-- Delphi has never actually been compiled. Keep code Delphi-compatible anyway: no FPC-only
-  syntax, no macros.
+- Delphi 11 (dcc64/dcc32) compiles both layouts and passes the tests.
+  Delphi differences found so far: no `PtrUInt` (use `NativeUInt`), directive
+  order `overload; static;` (not `static; overload;`), string literals max 255 elements (`pasStr`
+  splits them), `'lit' + AnsiChar` is a UnicodeString. No FPC-only syntax, no macros.
+  FPC on Windows has not been tested.
 - Callbacks support Java interfaces only (Proxy).
 
 ## Maven / Eclipse

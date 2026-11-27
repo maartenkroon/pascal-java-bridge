@@ -35,6 +35,7 @@ A Maven multi-module project (JDK 17+ to run the generator, built and tested wit
 ```bash
 mvn verify                                   # Java modules only
 mvn verify -Dfpc.executable=/path/to/fpc     # also compile and run the Pascal tests
+mvn verify -Ddcc.executable=dcc64            # the same with Delphi (Windows)
 mvn install                                  # put the generator and plugin in ~/.m2
 ```
 
@@ -42,6 +43,10 @@ With `-Dfpc.executable`, the `tests` module:
 1. generates `JDemo.pas` with the plugin;
 2. compiles `TestBindings.pas` with `-Sew` (warnings are errors);
 3. runs it under `-Xcheck:jni`, with `JAVA_HOME` set to the JDK running Maven.
+
+With `-Ddcc.executable` (profile `delphi-tests`) it does the same with Delphi, in
+`tests/target/delphi` (warnings are not errors there). Both properties can be set
+in one build.
 
 A failing test fails the build. Use `-DskipTests` to compile without running.
 
@@ -216,7 +221,12 @@ anything the generated code relies on:
   joins the ancestor's name.
 * **TObject / TInterfacedObject members** (`Destroy`, `Free`, `ClassName`, `ToString`, `RefCount`,
   …) are safe to use as Java method names. The implementation class only has mangled methods
-  (`J_17`), which method-resolution clauses bind to the interface methods.
+  (`J_17`), which method-resolution clauses bind to the interface methods. Delphi can't bind
+  overloaded interface methods with a clause, so under Delphi the implementation class gets
+  `reintroduce; overload;` forwarders named after the overloaded interface methods. The runtime
+  members the generated code calls (`JavaGlobalRef`, `CreateFromLocal`, `CreateFromGlobal`)
+  are therefore never overloaded: a second overload of a Java method with such a name is
+  renamed (`JavaGlobalRef_1`).
 * **Reserved names** are renamed with a `_n` suffix:
   * `QueryInterface`, `_AddRef`, `_Release`, `Self`, `Result`
   * Pascal type names used in signatures (`Integer`, `UnicodeString`, …)
@@ -315,13 +325,13 @@ TJCallbackHost.runInThread(TJRunnable.Implement(MyRunnable));
 ## Status and limitations
 
 * Tested with **FPC 3.2** on Linux x86-64 and **JDK 25**:
-  * 73 tests pass, including with `-Xcheck:jni`, for both the single unit and one unit per package
+  * 75 tests pass, including with `-Xcheck:jni`, for both the single unit and one unit per package
   * all of `java.**` (2,110 types, one unit per package) compiles
   * a 123-type JDK binding (42k lines, 67 callback interfaces) compiles without warnings
-* **Delphi has not been compiled yet.** The code avoids FPC-only features (Delphi mode, no
-  macros, `{$IFDEF}`s for unit names and library loading), but it has not been through dcc.
-  The riskiest construct is method-resolution clauses on overloaded interface methods
-  (`function IJFoo.bar = J_3;` where `J_3` is overloaded).
+* Tested with **Delphi 11** (dcc64) on Windows x64 and **JDK 25**: the same 75 tests pass, with
+  `-Xcheck:jni`, in both layouts. The test program also compiles with dcc32 (not run: no
+  32-bit JVM). Run them with `mvn verify -Ddcc.executable=dcc64` (profile `delphi-tests`).
+  FPC on Windows has not been tested.
 * Callbacks can implement Java **interfaces** only, not abstract classes
   (`java.lang.reflect.Proxy` cannot extend classes).
 * A callback call (about 335 ns) goes through `Proxy` plus boxing. Generating a dedicated Java

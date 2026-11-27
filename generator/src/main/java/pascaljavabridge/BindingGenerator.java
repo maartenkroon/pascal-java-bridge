@@ -88,6 +88,14 @@ public final class BindingGenerator {
             "jrtakeobjectarray", "tjavadispatchfunc", "jrcreateproxy", "jrargvalue", "jrbox",
             "jrnewlocalref", "javacallbackcount"));
 
+    /**
+     * TJavaObjectImpl members that generated bodies call on impl classes. Interface methods may
+     * use these names (FPC maps them with a resolution clause), but never with more than one
+     * overload: under Delphi overloaded names become impl-class methods (see delphiForwarders)
+     * and would hide these.
+     */
+    static final Set<String> IMPL_MEMBERS = Set.of("javaglobalref", "createfromlocal", "createfromglobal");
+
     // ------------------------------------------------------------------ model
 
     /** Case-insensitive identifier scope. */
@@ -742,7 +750,7 @@ public final class BindingGenerator {
                 return e;
             }
             if (e != null && overloadable && e.overloadable && e.javaName.equals(javaName)
-                    && !e.pasSigs.contains(pasSig)) {
+                    && !e.pasSigs.contains(pasSig) && !IMPL_MEMBERS.contains(l)) {
                 e.pasSigs.add(pasSig);
                 return e;
             }
@@ -998,8 +1006,15 @@ public final class BindingGenerator {
     static String pasStr(String s) {
         StringBuilder sb = new StringBuilder();
         boolean open = false;
+        int run = 0;    // elements in the current literal: Delphi allows at most 255
         for (byte b : s.getBytes(StandardCharsets.UTF_8)) {
             int v = b & 0xff;
+            if (run == 250) {
+                if (open) { sb.append('\''); open = false; }
+                sb.append(" + ");
+                run = 0;
+            }
+            run++;
             if (v >= 32 && v < 127) {
                 if (!open) { sb.append('\''); open = true; }
                 sb.append(v == '\'' ? "''" : String.valueOf((char) v));
@@ -1172,8 +1187,10 @@ public final class BindingGenerator {
                 sb.append("    { ").append(describe(m)).append(" }\n");
                 String h = heading(m, esc(m.entry.pas), p, true);
                 if (m.kind == MKind.CTOR) h = h.replace(": " + pasType(m.ret, false) + ";", ": " + t.intf + ";");
-                sb.append("    ").append(h).append(" static;")
-                        .append(m.kind == MKind.METHOD || m.kind == MKind.CTOR ? " overload;" : "").append('\n');
+                // Delphi requires "overload" before "static" (FPC accepts both orders)
+                sb.append("    ").append(h)
+                        .append(m.kind == MKind.METHOD || m.kind == MKind.CTOR ? " overload;" : "")
+                        .append(" static;\n");
             }
             sb.append("  end;\n\n");
         }
@@ -1184,14 +1201,80 @@ public final class BindingGenerator {
             String parentImpl = t.parent == null ? "TJavaObjectImpl" : t.parent.impl;
             sb.append("  ").append(t.impl).append(" = class(").append(parentImpl).append(", ").append(t.intf)
                     .append(")\n  public\n");
-            for (Entry e : t.inst.byName.values())
-                sb.append("    ").append(e.isProcedure ? "procedure " : "function ").append(t.intf).append('.')
-                        .append(esc(e.pas)).append(" = J_").append(e.implIndex).append(";\n");
+            Set<Entry> overloaded = overloadedEntries(t);
+            for (Entry e : t.inst.byName.values()) {
+                String clause = (e.isProcedure ? "procedure " : "function ") + t.intf + '.' + esc(e.pas)
+                        + " = J_" + e.implIndex + ";";
+                // Delphi: a resolution clause maps only one overload; see delphiForwarders
+                sb.append("    ").append(overloaded.contains(e) ? "{$IFDEF FPC}" + clause + "{$ENDIF}" : clause)
+                        .append('\n');
+            }
             for (Member m : t.newInst)
                 sb.append("    ").append(heading(m, "J_" + m.entry.implIndex, t.instParam, false))
                         .append(" overload;\n");
+            List<Member> fwd = delphiForwarders(t);
+            if (!fwd.isEmpty()) {
+                sb.append("    {$IFNDEF FPC}\n");
+                for (Member m : fwd)
+                    sb.append("    ").append(heading(m, esc(m.entry.pas), t.instParam, false))
+                            .append(" reintroduce; overload;\n");
+                sb.append("    {$ENDIF}\n");
+            }
             sb.append("  end;\n\n");
         }
+    }
+
+    /** Instance members of t, inherited ones included, grouped by their Pascal name. */
+    Map<Entry, List<Member>> membersByEntry(TInfo t) {
+        Map<Entry, List<Member>> r = new HashMap<>();
+        for (Member m : t.allInst.values()) r.computeIfAbsent(m.entry, k -> new ArrayList<>()).add(m);
+        return r;
+    }
+
+    /** Pascal names of t's interface that hold more than one overload. */
+    Set<Entry> overloadedEntries(TInfo t) {
+        Set<Entry> r = new HashSet<>();
+        membersByEntry(t).forEach((e, ms) -> { if (ms.size() > 1) r.add(e); });
+        return r;
+    }
+
+    /**
+     * Delphi can't map overloaded interface methods with a method resolution clause (one clause
+     * binds one overload, and a name can't have two clauses). Instead the impl class implements
+     * them by name: a forwarder per overload that calls J_n. Forwarders an ancestor impl class
+     * already declares are inherited, so only the new ones are returned. "reintroduce" because a
+     * Java name may hide a TObject member (Free, ToString, ...). Entry names the generated code
+     * itself calls on impl classes are never overloaded (see IMPL_MEMBERS).
+     */
+    List<Member> delphiForwarders(TInfo t) {
+        Set<Member> inherited = new HashSet<>();
+        if (t.parent != null) {
+            membersByEntry(t.parent).forEach((e, ms) -> { if (ms.size() > 1) inherited.addAll(ms); });
+        }
+        List<Member> r = new ArrayList<>();
+        membersByEntry(t).forEach((e, ms) -> {
+            if (ms.size() > 1) for (Member m : ms) if (!inherited.contains(m)) r.add(m);
+        });
+        r.sort(Comparator.comparingInt((Member m) -> m.entry.implIndex).thenComparingInt(m -> m.idSlot));
+        return r;
+    }
+
+    void emitDelphiForwarders(StringBuilder sb, TInfo t) {
+        List<Member> fwd = delphiForwarders(t);
+        if (fwd.isEmpty()) return;
+        sb.append("{$IFNDEF FPC}\n");
+        for (Member m : fwd) {
+            sb.append(heading(m, t.impl + "." + esc(m.entry.pas), t.instParam, false)).append("\nbegin\n  ");
+            if (m.ret != void.class) sb.append("Result := ");
+            sb.append("J_").append(m.entry.implIndex);
+            if (m.params.length > 0) {
+                List<String> args = new ArrayList<>();
+                for (int i = 0; i < m.params.length; i++) args.add(t.instParam + i);
+                sb.append('(').append(String.join(", ", args)).append(')');
+            }
+            sb.append(";\nend;\n\n");
+        }
+        sb.append("{$ENDIF}\n\n");
     }
 
     String emitBodies(List<TInfo> order) {
@@ -1199,6 +1282,7 @@ public final class BindingGenerator {
         for (TInfo t : order) if (t.hasCallback()) emitDispatcher(bodies, t);
         for (TInfo t : order) {
             for (Member m : t.newInst) emitBody(bodies, t, m, false);
+            emitDelphiForwarders(bodies, t);
             emitCastHelpers(bodies, t);
             for (Member m : t.statics) emitBody(bodies, t, m, true);
         }

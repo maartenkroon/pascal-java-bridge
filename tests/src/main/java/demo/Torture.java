@@ -32,6 +32,13 @@ public class Torture extends Base implements Runnable {
     public int IJObject() { return 16; }   // equals a generated type name
     public int Integer() { return 17; }    // equals a Pascal type used in signatures
     public int p0() { return 18; }         // equals the default parameter name
+    // overloaded: Delphi implements these by name in the impl class (TObject members there)
+    public String Free(int n) { return "Free" + n; }
+    public String toString(int n) { return "toString" + n; }
+    public int RefCount(int n) { return 9 + n; }
+    // overloaded runtime member names that generated code calls: the overload is renamed
+    public int JavaGlobalRef(int n) { return 10 + n; }
+    public int CreateFromLocal(int n) { return 11 + n; }
 
     // --- case-only differences (Pascal is case-insensitive)
     public String getUrl() { return "getUrl"; }

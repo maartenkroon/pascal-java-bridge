@@ -20,6 +20,22 @@ uses
   { generated with unitPerPackage: the records are in one unit per Java package }
   {$IFDEF UNIT_PER_PACKAGE}, JDemo_demo, JDemo_java_lang, JDemo_java_util, JDemo_java_util_function{$ENDIF};
 
+{$IFNDEF FPC}
+{ FPC RTL names used below }
+type
+  QWord = UInt64;
+
+function GetCurrentThreadId: TThreadID;
+begin
+  Result := TThread.CurrentThread.ThreadID;
+end;
+
+function GetTickCount64: UInt64;
+begin
+  Result := TThread.GetTickCount64;
+end;
+{$ENDIF}
+
 var
   Failures: Integer = 0;
 
@@ -70,6 +86,10 @@ begin
   Check(T._AddRef_1 = 8, '_AddRef renamed');
   Check(T.RefCount = 9, 'RefCount');
   Check(T.JavaGlobalRef = 10, 'JavaGlobalRef (runtime member name)');
+  Check((T.Free(1) = 'Free1') and (T.toString(2) = 'toString2') and (T.RefCount(3) = 12)
+    and (T.toString <> ''), 'overloads named like TObject members');
+  Check((T.JavaGlobalRef_1(1) = 11) and (T.CreateFromLocal_1(1) = 12),
+    'overloaded runtime member names renamed');
   Check(T.JrCall_1 = 12, 'JrCall renamed');
   Check(T.Result_1 = 13, 'Result renamed');
   Check(T.Self_2 = 14, 'Self renamed');

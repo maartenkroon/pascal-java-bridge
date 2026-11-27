@@ -14,6 +14,9 @@ unit JavaBridge;
 {$IFDEF FPC}
   {$MODE DELPHI}
   {$H+}
+{$ELSE}
+  { CreateFromLocal/CreateFromGlobal: only relevant for C++Builder }
+  {$WARN DUPLICATE_CTOR_DTOR OFF}
 {$ENDIF}
 
 interface
@@ -1288,7 +1291,7 @@ var
 begin
   Result := nil;
   EnterFromJava(Env);
-  B := TJavaCallbackBinding(Pointer(PtrUInt(Handle)));
+  B := TJavaCallbackBinding(Pointer(NativeUInt(Handle)));
   try
     Result := B.Dispatch(B.Target, Index, Args);
   except
@@ -1307,7 +1310,7 @@ var
   B: TJavaCallbackBinding;
 begin
   EnterFromJava(Env);
-  B := TJavaCallbackBinding(Pointer(PtrUInt(Handle)));
+  B := TJavaCallbackBinding(Pointer(NativeUInt(Handle)));
   try
     B.Target := nil;   { may run the Pascal object's destructor }
   except
@@ -1405,7 +1408,7 @@ begin
   B.Dispatch := Dispatch;
   A[0].l := IfaceClass;
   A[1].l := TFnNewStringUTF(Env^^[FN_NewStringUTF])(Env, Sigs);
-  A[2].j := jlong(PtrUInt(B));
+  A[2].j := jlong(NativeUInt(B));
   try
     Result := JrCall(GHandlerCls, GMidCreateProxy, @A[0], jkObject, True).l;
   except
@@ -1439,8 +1442,8 @@ begin
     raise EJavaError.Create('Invalid box kind');
   Env := JrEnv;
   Cls := JrResolveClass(GBoxCls[Kind], BOX_CLASS[Kind]);
-  UnboxSig := '()' + BOX_PRIM[Kind];
-  ValueOfSig := '(' + BOX_PRIM[Kind] + ')L' + AnsiString(BOX_CLASS[Kind]) + ';';
+  UnboxSig := AnsiString('()') + BOX_PRIM[Kind];
+  ValueOfSig := AnsiString('(') + BOX_PRIM[Kind] + ')L' + AnsiString(BOX_CLASS[Kind]) + ';';
   GBoxUnbox[Kind] := TFnGetMember(Env^^[FN_GetMethodID])(Env, Cls, BOX_UNBOX[Kind],
     PAnsiChar(UnboxSig));
   GBoxValueOf[Kind] := TFnGetMember(Env^^[FN_GetStaticMethodID])(Env, Cls, 'valueOf',
