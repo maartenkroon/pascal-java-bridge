@@ -77,6 +77,11 @@ public static class PjbEarly {
         check(b is IJTortureDisp && ((IJTortureDisp)b).over_3(1) == "int", "result has its run-time class (cast to IJTortureDisp)");
         IJListDisp l = t.list("a", "b");
         check(l.size() == 2 && (string)l.@get(1) == "b", "List result, VARIANT element");
+        check(l is IJArrayListDisp, "List result is an IJArrayListDisp (run-time class)");
+        IJArrayListDisp al = e.ArrayList.New();
+        var asList = (IJListDisp)al;
+        asList.add("z");
+        check(al.size() == 1 && (string)asList.@get(0) == "z", "ArrayList cast to IJListDisp (extra interface)");
         var arr = (Array)t.squares(4);
         check(arr.Length == 4 && (int)arr.GetValue(3) == 9, "int[] as SAFEARRAY");
         check(t.sum(new object[] { 1, 2, 3 }) == 6, "object[] -> int[]");

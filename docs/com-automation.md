@@ -180,8 +180,8 @@ from the plan above:
 - Generated server: `<unit>ComServer.dpr`, using the generic `JavaComClassObject` /
   `JavaComRegisterServer` from `JavaBridgeAuto`.
 - Threading model `Both`, like the late-bound server.
-- Tests: `TestComEarly.pas` (59, in process). With `-Dcom.scripts`, the registered server is
-  tested from VBScript (9) and from PowerShell and C# (27): the C# client is compiled against an
+- Tests: `TestComEarly.pas` (65, in process). With `-Dcom.scripts`, the registered server is
+  tested from VBScript (10) and from PowerShell and C# (29): the C# client is compiled against an
   interop assembly that .NET's `TypeLibConverter` makes from the registered `.tlb`, and it calls
   through the vtables.
 
@@ -217,8 +217,25 @@ Auto classes implement every wrapped interface of their class would close that g
 and `Implement` results skip the test. Tested from Delphi, C# (cast to `IJTortureDisp`) and
 VBScript (Torture's members on a `Base` result).
 
-Still open for Part 2: 32-bit; VBA in Office; and Auto classes that implement all wrapped
-interfaces of their Java class (see above).
+All wrapped interfaces (2026-11-27): an Auto class also lists the dual interfaces of the wrapped
+Java interfaces its class implements, unless its chain or its parent Auto class already has them.
+Delphi's `QueryInterface` only finds listed interfaces, so their ancestors are listed too. A member
+already implemented in the class hierarchy reuses that method. The others call the Java object
+through a Pascal wrapper of that interface (`TJList.Cast(FJava)`, cached on first use with
+`JavaComCacheIntf`), because the Pascal impl classes only implement their own chain. Each extra
+dual interface maps its `GetTypeInfo` / `GetIDsOfNames` / `Invoke` to generated methods that use
+its own type info (`GetTypeInfoFor` etc. in `TJavaAutoObject`). A name it doesn't know is looked
+up in the object's own interface and returned as that DISPID + `$01000000`, which `Invoke` routes
+back. So DISPIDs stay correct per interface, and VBScript still sees the run-time class.
+`ComWrap_Foo` now considers every type whose Auto class implements `IJFooDisp`, ordered by the
+number of wrapped supertypes (a subtype has more). Costs: each class implementing a wrapped
+interface gets methods for that interface's members, and `ComWrap_Foo` makes one `IsInstance` call
+per candidate, which can add up for widely implemented interfaces in large bindings.
+
+Found on the way: a VBScript or JScript run-time error stops the script but leaves `cscript`'s
+exit code at 0. `RunComScripts.ps1` now also requires "ALL TESTS PASSED" in each script's output.
+
+Still open for Part 2: 32-bit and VBA in Office.
 
 ## Open decisions (for the user)
 

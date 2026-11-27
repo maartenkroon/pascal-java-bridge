@@ -26,6 +26,9 @@ Call Check(t.counter_1 = 3 And t.counter() = 4, "property put/get")
 Call Check(t.over_3(1) = "int", "overload by unique name")
 Dim b : Set b = t.self()
 Call Check(b.over_3(1) = "int", "Base result is a Torture (run-time class)")
+Dim l2 : Set l2 = t.list("a", "b")
+l2.trimToSize
+Call Check(l2.size() = 2, "List result has ArrayList's members (trimToSize)")
 Set l = e.ArrayList.New()
 l.add 1 : l.add 2 : l.add 3
 sum = 0

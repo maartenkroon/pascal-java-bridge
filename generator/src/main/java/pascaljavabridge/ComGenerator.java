@@ -63,6 +63,7 @@ final class ComGenerator {
             "widestring", "wordbool", "idispatch", "iunknown", "itypelib", "tguid", "winapi", "activex",
             "syncobjs", "tcriticalsection", "lr", "lb", "lt", "lc", "lv", "javacomimplementtyped",
             "javacomtypedtarget", "tjavadispatchfunc", "jvalue", "jarray", "jobject", "jclass", "atarget", "aindex",
+            "javacomcacheintf",
             "aargs");
 
     enum Kind { METHOD, GET, PUT }
@@ -175,8 +176,6 @@ final class ComGenerator {
                 typedDispatch.put(t, scope.claim("ComDispatch_" + t.base));
             }
         classesVar = scope.claim("G" + u + "ComClasses");
-        for (TInfo t : g.sortedTypes())
-            if (t.cls != Object.class && !subtypes(t).isEmpty()) wrapFn.put(t, scope.claim("ComWrap_" + t.base));
 
         for (TInfo t : order) {
             Table tab = t.parent == null ? new Table() : tables.get(t.parent).copy();
@@ -224,6 +223,7 @@ final class ComGenerator {
                 fs.add(f);
             }
             inst.put(t, fs);
+            for (Func f : fs) funcOwner.put(f, t);
             if (cbDisp.containsKey(t)) callbackFuncs(t);
             stat.put(t, classFuncs(t));
         }
@@ -257,6 +257,91 @@ final class ComGenerator {
             entry.add(f);
             entryType.put(f, t);
         }
+        for (TInfo t : order) assignExtras(t);
+        for (TInfo t : g.sortedTypes())
+            if (t.cls != Object.class && !subtypes(t).isEmpty()) wrapFn.put(t, scope.claim("ComWrap_" + t.base));
+    }
+
+    // ------------------------------------------------------------------ extra interfaces
+
+    /** A wrapped Java interface that an Auto class implements besides its own chain. */
+    static final class Extra {
+        TInfo intf;
+        String getter, field;          // cached IJIntf wrapper of the Java object (null if unused)
+        String getTypeInfo, getIDsOfNames, invoke;   // its IDispatch methods
+    }
+
+    /** A member of an extra interface implemented by a new method of the Auto class. */
+    record ExtraMethod(Func func, String method, TInfo owner, Extra via) { }
+
+    final Map<Func, TInfo> funcOwner = new HashMap<>();
+    /** Per Auto class: its extra interfaces, the new methods for their members, and (inherited
+     *  too) the method implementing each extra member; the types whose dual interface it implements. */
+    final Map<TInfo, List<Extra>> extras = new HashMap<>();
+    final Map<TInfo, List<ExtraMethod>> extraMethods = new HashMap<>();
+    final Map<TInfo, Map<Func, String>> extraImpl = new HashMap<>();
+    final Map<TInfo, Set<TInfo>> implemented = new HashMap<>();
+    int xCounter = 0;
+
+    static Set<TInfo> chainSet(TInfo t) {
+        Set<TInfo> r = new java.util.LinkedHashSet<>();
+        for (TInfo p = t; p != null; p = p.parent) r.add(p);
+        return r;
+    }
+
+    /**
+     * The wrapped Java interfaces t's class implements that neither t's chain nor its parent Auto
+     * class provides. Delphi's QueryInterface only finds interfaces a class lists, so every one is
+     * listed, ancestors too. A member already implemented in the class hierarchy reuses that
+     * method; the others get a method that calls the Java object through a cached IJIntf wrapper.
+     */
+    void assignExtras(TInfo t) {
+        Set<TInfo> chain = chainSet(t);
+        Set<TInfo> impl = new java.util.LinkedHashSet<>(chain);
+        Map<Func, String> methods = new HashMap<>();
+        if (t.parent != null) {
+            impl.addAll(implemented.get(t.parent));
+            methods.putAll(extraImpl.get(t.parent));
+        }
+        Set<TInfo> before = new java.util.HashSet<>(impl);
+        List<Extra> ex = new ArrayList<>();
+        for (TInfo i : g.sortedTypes())
+            if (i.cls.isInterface() && i != t && i.cls.isAssignableFrom(t.cls) && !impl.contains(i)) {
+                Extra x = new Extra();
+                x.intf = i;
+                ex.add(x);
+            }
+        List<ExtraMethod> own = new ArrayList<>();
+        for (Extra x : ex) {
+            impl.add(x.intf);
+            for (Func f : chain(x.intf)) {
+                TInfo o = funcOwner.get(f);
+                if (chain.contains(o) || methods.containsKey(f)) continue;
+                if (before.contains(o)) throw new IllegalStateException("no method for " + f.comName);
+                if (x.getter == null) {
+                    int n = ++xCounter;
+                    x.getter = "As_" + n;
+                    x.field = "FAs_" + n;
+                }
+                String m = "C_" + (++cCounter);
+                methods.put(f, m);
+                own.add(new ExtraMethod(f, m, o, x));
+            }
+            int n = ++xCounter;
+            x.getTypeInfo = "X_" + n + "_GetTypeInfo";
+            x.getIDsOfNames = "X_" + n + "_GetIDsOfNames";
+            x.invoke = "X_" + n + "_Invoke";
+        }
+        extras.put(t, ex);
+        extraMethods.put(t, own);
+        extraImpl.put(t, methods);
+        implemented.put(t, impl);
+    }
+
+    /** The method of t's Auto class (or an ancestor) that implements f. */
+    String methodFor(TInfo t, Func f) {
+        String m = extraImpl.get(t).get(f);
+        return m != null ? m : f.cName;
     }
 
     /**
@@ -590,26 +675,26 @@ final class ComGenerator {
                 + v + ", " + disp.get(t) + ", " + typeLibFn + ");\n";
     }
 
-    /** Wrapped types whose dual-interface chain includes t, most specific (deepest) first. */
+    /** Wrapped types whose Auto class implements IJtDisp (chain or extra interface), most specific
+     *  first: a subtype has more wrapped supertypes than its supertypes. */
     List<TInfo> subtypes(TInfo t) {
         List<TInfo> r = new ArrayList<>();
         for (TInfo s : g.sortedTypes())
-            for (TInfo p = s.parent; p != null; p = p.parent)
-                if (p == t) { r.add(s); break; }
-        r.sort(java.util.Comparator.comparingInt((TInfo s) -> -depth(s)));   // stable: then by name
+            if (s != t && implemented.get(s).contains(t)) r.add(s);
+        r.sort(java.util.Comparator.comparingInt((TInfo s) -> -supertypeCount(s)));   // stable: then by name
         return r;
     }
 
-    static int depth(TInfo t) {
-        int d = 0;
-        for (TInfo p = t.parent; p != null; p = p.parent) d++;
-        return d;
+    int supertypeCount(TInfo s) {
+        int n = 0;
+        for (TInfo x : g.types.values()) if (x.cls.isAssignableFrom(s.cls)) n++;
+        return n;
     }
 
     /**
      * ComWrap_Foo: wraps an IJFoo in the Auto class of the most specific wrapped subtype it is an
-     * instance of. That object implements IJFooDisp too (the subtype's chain includes it), and its
-     * IDispatch and QueryInterface give the subtype, so clients see the run-time class.
+     * instance of. That object implements IJFooDisp too (in its chain or as an extra interface),
+     * and its IDispatch and QueryInterface give the subtype, so clients see the run-time class.
      */
     void emitWrapFunction(StringBuilder sb, TInfo t) {
         sb.append("function ").append(wrapFn.get(t)).append("(const p0: ").append(t.intf).append("): ")
@@ -674,8 +759,81 @@ final class ComGenerator {
         sb.append("  end;\n\n");
     }
 
+    static final String X_GETTYPEINFO = "(Index, LocaleID: Integer; out TypeInfo): HResult; stdcall;";
+    static final String X_GETIDSOFNAMES = "(const IID: TGUID; Names: Pointer; NameCount, LocaleID: Integer;"
+            + " DispIDs: Pointer): HResult; stdcall;";
+    static final String X_INVOKE = "(DispID: Integer; const IID: TGUID; LocaleID: Integer; Flags: Word;"
+            + " var Params; VarResult, ExcepInfo, ArgErr: Pointer): HResult; stdcall;";
+
+    /** The Auto class of t: its chain, plus the extra interfaces (see assignExtras). */
+    void emitAutoClass(StringBuilder sb, TInfo t) {
+        List<Extra> ex = extras.get(t);
+        sb.append("  ").append(auto.get(t)).append(" = class(")
+          .append(t.parent == null ? "TJavaAutoObject" : auto.get(t.parent)).append(", ").append(disp.get(t));
+        for (Extra x : ex) sb.append(", ").append(disp.get(x.intf));
+        sb.append(")\n");
+        boolean priv = false;
+        for (Extra x : ex)
+            if (x.getter != null) {
+                if (!priv) sb.append("  private\n");
+                priv = true;
+                sb.append("    ").append(x.field).append(": ").append(x.intf.intf).append(";\n    function ")
+                  .append(x.getter).append(": ").append(x.intf.intf).append(";\n");
+            }
+        sb.append("  public\n");
+        for (Func f : chain(t)) clause(sb, disp.get(t), f, f.cName);
+        for (Extra x : ex) {
+            String i = disp.get(x.intf);
+            for (Func f : chain(x.intf)) clause(sb, i, f, methodFor(t, f));
+            sb.append("    function ").append(i).append(".GetTypeInfo = ").append(x.getTypeInfo).append(";\n");
+            sb.append("    function ").append(i).append(".GetIDsOfNames = ").append(x.getIDsOfNames).append(";\n");
+            sb.append("    function ").append(i).append(".Invoke = ").append(x.invoke).append(";\n");
+        }
+        for (Func f : inst.get(t)) sb.append("    ").append(heading(f, f.cName, null)).append('\n');
+        for (ExtraMethod e : extraMethods.get(t)) sb.append("    ").append(heading(e.func(), e.method(), null)).append('\n');
+        for (Extra x : ex) {
+            sb.append("    function ").append(x.getTypeInfo).append(X_GETTYPEINFO).append('\n');
+            sb.append("    function ").append(x.getIDsOfNames).append(X_GETIDSOFNAMES).append('\n');
+            sb.append("    function ").append(x.invoke).append(X_INVOKE).append('\n');
+        }
+        sb.append("  end;\n\n");
+    }
+
+    static void clause(StringBuilder sb, String intf, Func f, String method) {
+        sb.append("    ").append(f.ret == null ? "procedure " : "function ").append(intf).append('.')
+          .append(BindingGenerator.esc(f.pasName)).append(" = ").append(method).append(";\n");
+    }
+
+    /** Bodies of t's extra-interface methods, wrapper getters and IDispatch methods. */
+    void emitExtraBodies(StringBuilder sb, TInfo t) {
+        String cls = auto.get(t);
+        for (Extra x : extras.get(t)) {
+            if (x.getter != null)
+                sb.append("function ").append(cls).append('.').append(x.getter).append(": ").append(x.intf.intf)
+                  .append(";\nbegin\n  if ").append(x.field).append(" = nil then\n    JavaComCacheIntf(")
+                  .append(x.field).append(", ").append(x.intf.comp).append(".Cast(FJava));\n  Result := ")
+                  .append(x.field).append(";\nend;\n\n");
+            String i = disp.get(x.intf);
+            sb.append("function ").append(cls).append('.').append(x.getTypeInfo).append(X_GETTYPEINFO)
+              .append("\nbegin\n  Result := GetTypeInfoFor(").append(i).append(", Index, TypeInfo);\nend;\n\n");
+            sb.append("function ").append(cls).append('.').append(x.getIDsOfNames).append(X_GETIDSOFNAMES)
+              .append("\nbegin\n  Result := GetIDsOfNamesFor(").append(i)
+              .append(", Names, NameCount, DispIDs);\nend;\n\n");
+            sb.append("function ").append(cls).append('.').append(x.invoke).append(X_INVOKE)
+              .append("\nbegin\n  Result := InvokeFor(").append(i)
+              .append(", DispID, Flags, Params, VarResult, ExcepInfo, ArgErr);\nend;\n\n");
+        }
+        for (ExtraMethod e : extraMethods.get(t))
+            emitBody(sb, cls, e.func(), e.owner(), false, e.method(), e.owner().intf + "(" + e.via().getter + ")");
+    }
+
     void emitBody(StringBuilder sb, String owner, Func f, TInfo t, boolean isStatic) {
-        sb.append(heading(f, f.cName, owner)).append('\n');
+        emitBody(sb, owner, f, t, isStatic, f.cName, null);
+    }
+
+    /** method: the implementing method's name; target: the Pascal interface to call (null: from t). */
+    void emitBody(StringBuilder sb, String owner, Func f, TInfo t, boolean isStatic, String method, String target0) {
+        sb.append(heading(f, method, owner)).append('\n');
         boolean needLR = (f.ret != null && f.ret.wrapped() != null);
         if (needLR || f.vars != null) sb.append("var\n");
         if (needLR) sb.append("  LR: ").append(f.ret.wrapped().intf).append(";\n");
@@ -685,7 +843,7 @@ final class ComGenerator {
             sb.append(f.special);
         } else {
             Member m = f.member;
-            String target = isStatic ? t.comp : t.intf + "(FJava)";
+            String target = target0 != null ? target0 : isStatic ? t.comp : t.intf + "(FJava)";
             String name = BindingGenerator.esc(m.entry.pas);
             List<String> args = new ArrayList<>();
             for (int i = 0; i < m.params.length; i++) args.add(argIn(m.params[i], "p" + i));
@@ -741,11 +899,7 @@ final class ComGenerator {
         sb.append("procedure ").append(describeFn).append("(B: TJavaTypeLibBuilder);\n");
         sb.append("{ A new entry object, without COM registration. }\nfunction ").append(entryFn).append(": ")
           .append(entryIntf).append(";\n\nimplementation\n\ntype\n");
-        for (TInfo t : order) {
-            List<Func> all = chain(t);
-            emitClass(sb, auto.get(t), t.parent == null ? "TJavaAutoObject" : auto.get(t.parent), disp.get(t),
-                    all, inst.get(t), null);
-        }
+        for (TInfo t : order) emitAutoClass(sb, t);
         for (TInfo t : order)
             emitClass(sb, clsAuto.get(t), "TJavaAutoObject", clsIntf.get(t), stat.get(t), stat.get(t), null);
         emitClass(sb, entryClass, "TJavaAutoObject", entryIntf, entry, entry, "  private\n    FJvmPath: string;\n");
@@ -786,6 +940,7 @@ final class ComGenerator {
         for (TInfo t : order) if (typedDispatch.containsKey(t)) emitTypedDispatch(sb, t);
         // bodies
         for (TInfo t : order) for (Func f : inst.get(t)) emitBody(sb, auto.get(t), f, t, false);
+        for (TInfo t : order) emitExtraBodies(sb, t);
         for (TInfo t : order) for (Func f : stat.get(t)) emitBody(sb, clsAuto.get(t), f, t, true);
         for (Func f : entry) emitBody(sb, entryClass, f, entryType.get(f), true);
         sb.append("initialization\n  ").append(lockVar).append(" := TCriticalSection.Create;\n\nfinalization\n  ")

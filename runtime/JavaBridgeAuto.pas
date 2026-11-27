@@ -84,6 +84,15 @@ type
     FTypeLib: TJavaTypeLibFunc;
     FTypeInfo: ITypeInfo;
     function TypeInfo: ITypeInfo;
+    { IDispatch for another dual interface AIID of this object (the generated
+      classes map that interface's IDispatch methods to these): its own type
+      info, so DISPIDs and names are that interface's. }
+    function TypeInfoFor(const AIID: TGUID): ITypeInfo;
+    function GetTypeInfoFor(const AIID: TGUID; Index: Integer; out TypeInfo): HResult;
+    function GetIDsOfNamesFor(const AIID: TGUID; Names: Pointer; NameCount: Integer;
+      DispIDs: Pointer): HResult;
+    function InvokeFor(const AIID: TGUID; DispID: Integer; Flags: Word; var Params;
+      VarResult, ExcepInfo, ArgErr: Pointer): HResult;
   public
     { Obj: the wrapped Java object (nil for class objects); IID: the dual
       interface this object implements; TypeLib: returns the library. }
@@ -107,6 +116,10 @@ type
   TJavaDispatch), as a new wrapper; nil for nil. Raises EJavaError for other
   COM objects. }
 function JavaComObject(const D: IInterface): IJavaObject;
+
+{ Stores Value in Slot (an interface variable) unless Slot is already set,
+  thread-safely; used by generated classes to cache a wrapper. }
+procedure JavaComCacheIntf(var Slot; const Value: IInterface);
 
 { Array conversions for generated code: variant arrays (any element types
   that convert) to Java arrays and back. }
@@ -610,6 +623,111 @@ begin
   end;
 end;
 
+var
+  GTypeInfoLock: TCriticalSection;
+  GTypeInfoIIDs: TArray<TGUID>;
+  GTypeInfos: TArray<ITypeInfo>;
+
+{ The vtable half of dual interface IID in Lib, cached (IIDs are unique). }
+function VtblTypeInfo(const Lib: ITypeLib; const IID: TGUID): ITypeInfo;
+var
+  TI, Vtbl: ITypeInfo;
+  Ref: HRefType;
+  I: Integer;
+begin
+  GTypeInfoLock.Acquire;
+  try
+    for I := 0 to High(GTypeInfoIIDs) do
+      if IsEqualGUID(GTypeInfoIIDs[I], IID) then
+        Exit(GTypeInfos[I]);
+    OleCheck(Lib.GetTypeInfoOfGuid(IID, TI));
+    if Succeeded(TI.GetRefTypeOfImplType(-1, Ref)) then
+    begin
+      OleCheck(TI.GetRefTypeInfo(Ref, Vtbl));
+      TI := Vtbl;
+    end;
+    GTypeInfoIIDs := GTypeInfoIIDs + [IID];
+    GTypeInfos := GTypeInfos + [TI];
+    Result := TI;
+  finally
+    GTypeInfoLock.Release;
+  end;
+end;
+
+function TJavaAutoObject.TypeInfoFor(const AIID: TGUID): ITypeInfo;
+begin
+  if IsEqualGUID(AIID, FIID) then
+    Result := TypeInfo
+  else
+    Result := VtblTypeInfo(FTypeLib(), AIID);
+end;
+
+function TJavaAutoObject.GetTypeInfoFor(const AIID: TGUID; Index: Integer; out TypeInfo): HResult;
+begin
+  Pointer(TypeInfo) := nil;
+  if Index <> 0 then
+    Exit(DISP_E_BADINDEX);
+  try
+    ITypeInfo(TypeInfo) := TypeInfoFor(AIID);
+    Result := S_OK;
+  except
+    Result := E_UNEXPECTED;
+  end;
+end;
+
+const
+  { A name that the extra interface doesn't have but the object's own (most
+    specific) interface has gets that interface's DISPID plus this, so late-bound
+    clients reach every member of the run-time class through any interface. }
+  DISPID_OWN_BASE = $01000000;
+
+function TJavaAutoObject.GetIDsOfNamesFor(const AIID: TGUID; Names: Pointer; NameCount: Integer;
+  DispIDs: Pointer): HResult;
+begin
+  try
+    JavaComReleasePending;
+    Result := DispGetIDsOfNames(TypeInfoFor(AIID), Names, NameCount, DispIDs);
+    if (Result = DISP_E_UNKNOWNNAME) and not IsEqualGUID(AIID, FIID) then
+    begin
+      Result := DispGetIDsOfNames(TypeInfo, Names, NameCount, DispIDs);
+      if Succeeded(Result) and (PInteger(DispIDs)^ > 0) then
+        Inc(PInteger(DispIDs)^, DISPID_OWN_BASE);
+    end;
+  except
+    Result := E_UNEXPECTED;
+  end;
+end;
+
+function TJavaAutoObject.InvokeFor(const AIID: TGUID; DispID: Integer; Flags: Word; var Params;
+  VarResult, ExcepInfo, ArgErr: Pointer): HResult;
+var
+  P: Pointer;
+begin
+  if DispID >= DISPID_OWN_BASE then
+    Exit(InvokeFor(FIID, DispID - DISPID_OWN_BASE, Flags, Params, VarResult, ExcepInfo, ArgErr));
+  try
+    JavaComReleasePending;
+    if not GetInterface(AIID, P) then
+      Exit(E_NOINTERFACE);
+    try
+      if (Flags and DISPATCH_PROPERTYPUTREF) <> 0 then
+        Flags := (Flags and not DISPATCH_PROPERTYPUTREF) or DISPATCH_PROPERTYPUT;
+      Result := DispInvoke(P, TypeInfoFor(AIID), DispID, Flags, TDispParams(Params), VarResult,
+        ExcepInfo, ArgErr);
+    finally
+      IInterface(P)._Release;
+    end;
+  except
+    Result := E_UNEXPECTED;
+  end;
+end;
+
+procedure JavaComCacheIntf(var Slot; const Value: IInterface);
+begin
+  if (Value <> nil) and (TInterlocked.CompareExchange(Pointer(Slot), Pointer(Value), nil) = nil) then
+    Value._AddRef;   { the slot now holds a reference }
+end;
+
 function TJavaAutoObject.InterfaceSupportsErrorInfo(const iid: TIID): HResult;
 begin
   Result := S_OK;
@@ -998,5 +1116,12 @@ begin
       Result := SELFREG_E_CLASS;
   end;
 end;
+
+initialization
+  GTypeInfoLock := TCriticalSection.Create;
+
+finalization
+  GTypeInfos := nil;
+  FreeAndNil(GTypeInfoLock);
 
 end.

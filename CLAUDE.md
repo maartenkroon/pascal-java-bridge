@@ -75,6 +75,11 @@ mvn -B verify                                                              # Jav
   A type library keeps one spelling per name (case-insensitive, first one wins).
   Wrapped results go through `wrapInto`: `ComWrap_Foo` (most specific subtype in the dual chain,
   by `IsInstance`) when Foo has such subtypes; constructor and `Implement` results use `wrapExact`.
+  `assignExtras`: an Auto class also implements the dual interfaces of its class's other wrapped
+  Java interfaces (all listed: Delphi QI only finds listed ones), with new `C_n` methods calling
+  through a cached `As_n` wrapper and `X_n_*` IDispatch methods (own type info, unknown names
+  fall back to the object's interface with DISPID + `$01000000`). `subtypes` uses `implemented`.
+  `RunComScripts.ps1` needs "ALL TESTS PASSED" in a script's output: cscript exits 0 on errors.
 - `comserver/PascalJavaBridgeCom.dpr`: Delphi in-process COM server (hand-written class factory
   and `DllRegisterServer`/`DllInstall`, no TComObject/type library). CLSID is name-based
   (`pascal-java-bridge-com-clsid:PascalJavaBridge.JVM`); keep it stable. PowerShell sees no

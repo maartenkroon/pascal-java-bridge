@@ -463,12 +463,16 @@ Rules:
   is `Double`; `String` is `WideString`. A wrapped type `Foo` is `IJFooDisp`. Arrays, `Object` and
   other unwrapped types are `OleVariant`, converted as for late binding, so `map.get("k")` gives
   the value itself.
-* **Run-time class**: a result declared as `Foo` is wrapped as the most specific wrapped type
-  whose dual interface derives from `IJFooDisp`. `Base self()` on a `Torture` returns an object
-  typed `IJBaseDisp` that is an `IJTortureDisp` too: C# can cast it, and VBScript can call
-  Torture's members on it. If the run-time class's interface doesn't derive from the declared one
-  (an `ArrayList` returned as `List`: `IJArrayListDisp` follows the superclasses), the result keeps
-  the declared type; use `Cast`. Constructors and `Implement` return their exact type.
+* **All interfaces**: an object implements the dual interfaces of every wrapped type its Java
+  class is: its superclass chain and its wrapped Java interfaces. So an `IJArrayListDisp` is an
+  `IJListDisp` too (C#: `(IJListDisp)list`; Delphi: `Supports`). Each of those interfaces has its
+  own `IDispatch` with its own type info and DISPIDs. Names it doesn't have are looked up in the
+  object's most specific interface, so late binding reaches every member through any of them.
+* **Run-time class**: a result declared as `Foo` is wrapped as the most specific wrapped type of
+  the object's run-time class that is a `Foo`. `Base self()` on a `Torture` returns an object typed
+  `IJBaseDisp` that is an `IJTortureDisp` too. `Torture.list()`, declared `List`, returns an
+  `IJArrayListDisp`, so VBScript can call `trimToSize` on it. Constructors and `Implement` return
+  their exact type. An object of an unwrapped class gets the declared type (`Cast` converts).
 * `Object.toString` is the default member (DISPID 0), and every `Iterable`, `Map`, `Iterator` and
   `Enumeration` has `_NewEnum`, so For Each works.
 * Java exceptions become COM errors through `IErrorInfo` (source: the Java class), so C# gets a
@@ -532,10 +536,10 @@ GUIDs are name-based (unit and class names), so they stay the same across regene
 * Tested with **Delphi 11** (dcc64) on Windows x64 and **JDK 25**: the same 75 tests pass, with
   `-Xcheck:jni`, in both layouts. The test program also compiles with dcc32 (not run: no
   32-bit JVM). Run them with `mvn verify -Ddcc.executable=dcc64` (profile `delphi-tests`).
-  That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (59
+  That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (65
   tests of the generated early binding, in both layouts), under `-Xcheck:jni`. With `-Dcom.scripts`, the
   late-bound server passes its VBScript (20), JScript (7) and PowerShell (8) tests, and the
-  generated server its VBScript (9) and PowerShell + C# (27) tests.
+  generated server its VBScript (10) and PowerShell + C# (29) tests.
   FPC on Windows has not been tested.
 * Callbacks can implement Java **interfaces** only, not abstract classes
   (`java.lang.reflect.Proxy` cannot extend classes).

@@ -235,6 +235,8 @@ var
   B: IJBaseDisp;
   L: IJListDisp;
   AL, Sorted: IJArrayListDisp;
+  LI: IJListDisp;
+  LD: IDispatch;
   M: IJHashMapDisp;
   SB: IJStringBuilderDisp;
   R: IJRunnableDisp;
@@ -329,6 +331,20 @@ begin
     Check(Sum = 6, '_NewEnum (For Each)');
     Check(E.List.Cast(AL).size = 3, 'Cast to an interface');
     Check(E.List.IsInstance(AL) and not E.Map.IsInstance(AL), 'IsInstance');
+    Check(Supports(AL, IJListDisp, LI) and (LI.size = 3) and (LI.get(0) = 1),
+      'ArrayList implements IJListDisp (extra interface, vtable)');
+    LD := LI;
+    Check(TypeName(LD) = 'IJListDisp', 'IDispatch of the extra interface has its own type info');
+    V := LD;
+    Check(V.size = 3, 'late binding through the extra interface');
+    V.trimToSize;
+    Check(V.size = 3, 'run-time class member by name through the extra interface (trimToSize)');
+    V := Unassigned;
+    LD := nil;
+    LI := nil;
+    Check(Supports(T, IJRunnableDisp), 'Torture implements IJRunnableDisp (extra interface)');
+    Check(TypeName(T.list('a', 'b') as IDispatch) = 'IJArrayListDisp',
+      'List result is an IJArrayListDisp (run-time class through an extra interface)');
     Check(RaisesOle(procedure begin E.Map.Cast(AL) end, 'cannot be cast'), 'invalid Cast raises');
     Check(RaisesOle(procedure begin T.fail('boom') end, 'java.lang.IllegalStateException'),
       'Java exception -> EOleException, source = Java class');
