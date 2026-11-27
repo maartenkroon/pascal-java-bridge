@@ -19,7 +19,9 @@
     <resources>
       <!-- ship the Pascal runtime inside the jar, so the with-runtime option and the Maven plugin can copy it -->
       <resource>
-        <directory>${pascal.runtime.dir}</directory>
+        <!-- relative to this module, not ${pascal.runtime.dir}: m2e (Eclipse) doesn't set
+             maven.multiModuleProjectDirectory like the command line does -->
+        <directory>${project.basedir}/../runtime</directory>
         <targetPath>pascaljavabridge/runtime</targetPath>
         <includes>
           <include>JavaBridge.pas</include>

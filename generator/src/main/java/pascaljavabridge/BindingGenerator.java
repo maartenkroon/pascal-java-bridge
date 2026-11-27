@@ -289,12 +289,39 @@ public final class BindingGenerator {
         Files.createDirectories(dir);
         for (String f : RUNTIME_FILES) {
             try (var in = BindingGenerator.class.getResourceAsStream("runtime/" + f)) {
-                if (in == null)
-                    throw new IOException("Runtime file " + f + " is not packaged with the generator "
-                            + "(run the generator from its jar)");
-                writeIfChanged(dir.resolve(f), new String(in.readAllBytes(), StandardCharsets.UTF_8));
+                byte[] bytes;
+                if (in != null) {
+                    bytes = in.readAllBytes();
+                } else {
+                    Path src = sourceRuntimeDir();
+                    if (src == null || !Files.isRegularFile(src.resolve(f)))
+                        throw new IOException("Runtime file " + f + " is not packaged with the generator "
+                                + "(run the generator from its jar)");
+                    bytes = Files.readAllBytes(src.resolve(f));
+                }
+                writeIfChanged(dir.resolve(f), new String(bytes, StandardCharsets.UTF_8));
             }
         }
+    }
+
+    /**
+     * The repository's runtime folder when the generator runs from {@code generator/target/classes}
+     * (an IDE launch) instead of its jar; null otherwise.
+     */
+    static Path sourceRuntimeDir() {
+        try {
+            var cs = BindingGenerator.class.getProtectionDomain().getCodeSource();
+            if (cs == null) return null;
+            Path classes = Path.of(cs.getLocation().toURI());
+            if (!Files.isDirectory(classes)) return null;   // a jar
+            for (Path p = classes; p != null; p = p.getParent()) {
+                Path r = p.resolve("runtime");
+                if (Files.isRegularFile(r.resolve("JavaBridge.pas"))) return r;
+            }
+        } catch (Exception e) {
+            // no fallback
+        }
+        return null;
     }
 
     /** Writes the file only if its content differs, so incremental builds don't recompile. */
