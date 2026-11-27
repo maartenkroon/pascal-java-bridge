@@ -74,6 +74,7 @@ public static class PjbEarly {
         check(t.@type() == 1, "keyword member");
         IJBaseDisp b = t.self();
         check(b.who() == "Torture", "wrapped result typed as IJBaseDisp");
+        check(b is IJTortureDisp && ((IJTortureDisp)b).over_3(1) == "int", "result has its run-time class (cast to IJTortureDisp)");
         IJListDisp l = t.list("a", "b");
         check(l.size() == 2 && (string)l.@get(1) == "b", "List result, VARIANT element");
         var arr = (Array)t.squares(4);

@@ -180,8 +180,8 @@ from the plan above:
 - Generated server: `<unit>ComServer.dpr`, using the generic `JavaComClassObject` /
   `JavaComRegisterServer` from `JavaBridgeAuto`.
 - Threading model `Both`, like the late-bound server.
-- Tests: `TestComEarly.pas` (55, in process). With `-Dcom.scripts`, the registered server is
-  tested from VBScript (8) and from PowerShell and C# (26): the C# client is compiled against an
+- Tests: `TestComEarly.pas` (59, in process). With `-Dcom.scripts`, the registered server is
+  tested from VBScript (9) and from PowerShell and C# (27): the C# client is compiled against an
   interop assembly that .NET's `TypeLibConverter` makes from the registered `.tlb`, and it calls
   through the vtables.
 
@@ -207,8 +207,18 @@ Found on the way: a type library keeps one spelling per name, case-insensitively
 `List` property is `list` in `JDemo` (`Torture.list()` was added first). That matters only to
 case-sensitive clients (C#, C++); see the README.
 
-Still open for Part 2: 32-bit; VBA in Office; and returning the most specific wrapper for a result's run-time class (now the
-declared type is used; `Cast` converts).
+Most specific wrapper (2026-11-27): a type with wrapped subtypes in its dual-interface chain gets
+`ComWrap_Foo`, which tests the subtypes deepest first (`TJSub.IsInstance`) and creates that
+subtype's Auto class. The object implements `IJFooDisp` as well, so the declared return type stays
+valid, while `QueryInterface` and `IDispatch` (type info of the subtype) see the run-time class.
+Only subtypes whose chain contains the declared type qualify. A class's chain follows its
+superclasses, so an `ArrayList` returned as `List` stays `IJListDisp` (`Cast` converts); making the
+Auto classes implement every wrapped interface of their class would close that gap. Constructor
+and `Implement` results skip the test. Tested from Delphi, C# (cast to `IJTortureDisp`) and
+VBScript (Torture's members on a `Base` result).
+
+Still open for Part 2: 32-bit; VBA in Office; and Auto classes that implement all wrapped
+interfaces of their Java class (see above).
 
 ## Open decisions (for the user)
 

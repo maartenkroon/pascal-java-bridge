@@ -73,6 +73,8 @@ mvn -B verify                                                              # Jav
   has its own class slots (`G<unit>ComClasses`, for `Object[]` results): don't call
   `g.argToJava` for object arrays, it would allocate slots in the Pascal unit's model.
   A type library keeps one spelling per name (case-insensitive, first one wins).
+  Wrapped results go through `wrapInto`: `ComWrap_Foo` (most specific subtype in the dual chain,
+  by `IsInstance`) when Foo has such subtypes; constructor and `Implement` results use `wrapExact`.
 - `comserver/PascalJavaBridgeCom.dpr`: Delphi in-process COM server (hand-written class factory
   and `DllRegisterServer`/`DllInstall`, no TComObject/type library). CLSID is name-based
   (`pascal-java-bridge-com-clsid:PascalJavaBridge.JVM`); keep it stable. PowerShell sees no

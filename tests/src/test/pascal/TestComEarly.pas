@@ -303,6 +303,12 @@ begin
     Check(T.nullString = '', 'null String -> empty');
     B := T.self;
     Check(B.who = 'Torture', 'wrapped result, virtual dispatch');
+    Check(Supports(B, IJTortureDisp), 'result typed IJBaseDisp is a Torture (QueryInterface)');
+    Check(TypeName(B as IDispatch) = 'IJTortureDisp', 'result has the run-time class''s type info');
+    V := B as IDispatch;
+    Check(V.over_3(1) = 'int', 'subclass member by name on a Base result');
+    V := Unassigned;
+    Check(TypeName(E.Base.New.self as IDispatch) = 'IJBaseDisp', 'a plain Base stays IJBaseDisp');
     L := T.list('a', 'b');
     Check((L.size = 2) and (L.get(1) = 'b'), 'wrapped List result, Object result as VARIANT');
     L.add(42);

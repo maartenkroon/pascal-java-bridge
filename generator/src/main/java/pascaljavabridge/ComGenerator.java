@@ -129,6 +129,8 @@ final class ComGenerator {
      *  (its funcs in vtable order, and in dispatch order = cbMethods order) and the dispatch
      *  function. */
     final Map<TInfo, String> cbDisp = new HashMap<>(), typedDispatch = new HashMap<>();
+    /** ComWrap_Foo per type with wrapped subtypes in its chain (see emitWrapFunction). */
+    final Map<TInfo, String> wrapFn = new HashMap<>();
     final Map<TInfo, List<Func>> cbFuncs = new LinkedHashMap<>(), cbDispatchOrder = new HashMap<>();
     final List<Func> entry = new ArrayList<>();
     final Map<Func, TInfo> entryType = new HashMap<>();
@@ -173,6 +175,8 @@ final class ComGenerator {
                 typedDispatch.put(t, scope.claim("ComDispatch_" + t.base));
             }
         classesVar = scope.claim("G" + u + "ComClasses");
+        for (TInfo t : g.sortedTypes())
+            if (t.cls != Object.class && !subtypes(t).isEmpty()) wrapFn.put(t, scope.claim("ComWrap_" + t.base));
 
         for (TInfo t : order) {
             Table tab = t.parent == null ? new Table() : tables.get(t.parent).copy();
@@ -344,7 +348,7 @@ final class ComGenerator {
             String name = BindingGenerator.pasStr(t.cls.getName());
             String late = rec + ".Cast(JavaComImplement(" + name + ", p0))";
             if (!cbDisp.containsKey(t)) {
-                impl.special = resultOut(t.cls, late);
+                impl.special = resultOutExact(t.cls, late);
             } else {
                 // the client implements IJFooCallbackDisp: call it through the vtable, else by name
                 String sigs = t.cbMethods.stream().map(m -> m.javaName + m.jniSig)
@@ -353,7 +357,7 @@ final class ComGenerator {
                 impl.special = "  if System.SysUtils.Supports(p0, " + cbDisp.get(t) + ", LT) then\n    LR := " + rec
                         + ".Cast(JavaComImplementTyped(" + name + ", LT, " + typedDispatch.get(t) + ",\n      "
                         + BindingGenerator.pasStr(sigs) + "))\n  else\n    LR := " + late + ";\n"
-                        + wrapResult(t, "LR");
+                        + wrapExact(t, "LR", "Result");
             }
             fs.add(impl);
         }
@@ -541,12 +545,22 @@ final class ComGenerator {
 
     /** Statements assigning Pascal value expression e (of Java type c) to Result. */
     String resultOut(Class<?> c, String e) {
-        return assignOut(c, e, "Result", "LR");
+        return assignOut(c, e, "Result", "LR", false);
+    }
+
+    /** As resultOut, for a value whose run-time class is exactly c (constructors, proxies). */
+    String resultOutExact(Class<?> c, String e) {
+        return assignOut(c, e, "Result", "LR", true);
+    }
+
+    String assignOut(Class<?> c, String e, String target, String tmp) {
+        return assignOut(c, e, target, tmp, false);
     }
 
     /** Statements assigning Pascal value expression e (of Java type c) to COM variable target;
-     *  tmp is a variable of the Pascal interface type, for wrapped types. */
-    String assignOut(Class<?> c, String e, String target, String tmp) {
+     *  tmp is a variable of the Pascal interface type, for wrapped types. A wrapped value gets the
+     *  most specific wrapper of its run-time class (see wrapFn), unless exact. */
+    String assignOut(Class<?> c, String e, String target, String tmp, boolean exact) {
         String a = "  " + target + " := ";
         if (c.isPrimitive()) return switch (c.getName()) {
             case "char" -> a + "WideString(" + e + ");\n";
@@ -560,17 +574,52 @@ final class ComGenerator {
             return a + "JrObjectArrayToVar(" + e + ");\n";
         }
         TInfo t = g.types.get(c);
-        if (t != null && c != Object.class) return "  " + tmp + " := " + e + ";\n" + wrapInto(t, tmp, target);
+        if (t != null && c != Object.class)
+            return "  " + tmp + " := " + e + ";\n" + (exact ? wrapExact(t, tmp, target) : wrapInto(t, tmp, target));
         return a + "JavaToVariant(" + e + ");\n";
     }
 
-    String wrapResult(TInfo t, String v) {
-        return wrapInto(t, v, "Result");
+    /** v (an IJFoo) wrapped for COM: in the wrapper of its most specific wrapped subtype, if t has any. */
+    String wrapInto(TInfo t, String v, String target) {
+        if (wrapFn.containsKey(t)) return "  " + target + " := " + wrapFn.get(t) + "(" + v + ");\n";
+        return wrapExact(t, v, target);
     }
 
-    String wrapInto(TInfo t, String v, String target) {
+    String wrapExact(TInfo t, String v, String target) {
         return "  if " + v + " = nil then " + target + " := nil else " + target + " := " + auto.get(t) + ".Create("
                 + v + ", " + disp.get(t) + ", " + typeLibFn + ");\n";
+    }
+
+    /** Wrapped types whose dual-interface chain includes t, most specific (deepest) first. */
+    List<TInfo> subtypes(TInfo t) {
+        List<TInfo> r = new ArrayList<>();
+        for (TInfo s : g.sortedTypes())
+            for (TInfo p = s.parent; p != null; p = p.parent)
+                if (p == t) { r.add(s); break; }
+        r.sort(java.util.Comparator.comparingInt((TInfo s) -> -depth(s)));   // stable: then by name
+        return r;
+    }
+
+    static int depth(TInfo t) {
+        int d = 0;
+        for (TInfo p = t.parent; p != null; p = p.parent) d++;
+        return d;
+    }
+
+    /**
+     * ComWrap_Foo: wraps an IJFoo in the Auto class of the most specific wrapped subtype it is an
+     * instance of. That object implements IJFooDisp too (the subtype's chain includes it), and its
+     * IDispatch and QueryInterface give the subtype, so clients see the run-time class.
+     */
+    void emitWrapFunction(StringBuilder sb, TInfo t) {
+        sb.append("function ").append(wrapFn.get(t)).append("(const p0: ").append(t.intf).append("): ")
+          .append(disp.get(t)).append(";\nbegin\n  if p0 = nil then\n    Result := nil\n");
+        for (TInfo s : subtypes(t))
+            sb.append("  else if ").append(s.comp).append(".IsInstance(p0) then\n    Result := ").append(auto.get(s))
+              .append(".Create(").append(s.comp).append(".Cast(p0), ").append(disp.get(s)).append(", ")
+              .append(typeLibFn).append(")\n");
+        sb.append("  else\n    Result := ").append(auto.get(t)).append(".Create(p0, ").append(disp.get(t))
+          .append(", ").append(typeLibFn).append(");\nend;\n\n");
     }
 
     // ------------------------------------------------------------------ emission
@@ -642,7 +691,7 @@ final class ComGenerator {
             for (int i = 0; i < m.params.length; i++) args.add(argIn(m.params[i], "p" + i));
             String call = target + "." + name + (args.isEmpty() ? "" : "(" + String.join(", ", args) + ")");
             if (f.ret == null) sb.append("  ").append(call).append(";\n");
-            else sb.append(resultOut(m.kind == MKind.CTOR ? t.cls : m.ret, call));
+            else sb.append(m.kind == MKind.CTOR ? resultOutExact(t.cls, call) : resultOut(m.ret, call));
         }
         sb.append("end;\n\n");
     }
@@ -732,7 +781,8 @@ final class ComGenerator {
         sb.append("function ").append(entryFn).append(": ").append(entryIntf).append(";\nbegin\n  Result := ")
           .append(entryClass).append(".Create(nil, ").append(entryIntf).append(", ").append(typeLibFn)
           .append(");\nend;\n\n");
-        // typed callbacks (before the Implement bodies that use them)
+        // most specific wrappers, then typed callbacks (before the bodies that use them)
+        for (TInfo t : order) if (wrapFn.containsKey(t)) emitWrapFunction(sb, t);
         for (TInfo t : order) if (typedDispatch.containsKey(t)) emitTypedDispatch(sb, t);
         // bodies
         for (TInfo t : order) for (Func f : inst.get(t)) emitBody(sb, auto.get(t), f, t, false);
