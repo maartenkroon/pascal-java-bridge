@@ -30,6 +30,10 @@ import pascaljavabridge.BindingGenerator.TInfo;
  * <li>{@code <unit>ComServer.dpr}, the in-process COM server.</li>
  * </ul>
  *
+ * <p>With unit-per-package output there is still one COM unit and one type library for all
+ * types: the COM unit uses the types unit and every package unit (generated names are global, so
+ * nothing clashes).
+ *
  * <p>COM has no overloads, so every member gets a unique name ({@code over}, {@code over_1}, ...),
  * case-insensitively and per interface chain. The Delphi classes map interface methods to
  * {@code C_n} methods with resolution clauses (one per name, which Delphi accepts here because
@@ -504,7 +508,10 @@ final class ComGenerator {
                     .append(clsIntf.get(t)).append('\n');
         sb.append("}\nunit ").append(comUnit).append(";\n\ninterface\n\nuses\n")
           .append("  Winapi.ActiveX, System.SysUtils, System.SyncObjs, JavaBridge, JavaBridgeCom, JavaBridgeAuto,\n  ")
-          .append(unit).append(";\n\nconst\n");
+          .append(unit);
+        // unit-per-package: the records (TJFoo) are in the package units
+        for (BindingGenerator.PUnit u : g.units) sb.append(",\n  ").append(u.name);
+        sb.append(";\n\nconst\n");
         sb.append("  LIBID_").append(coName).append(": TGUID = '{").append(libId()).append("}';\n");
         sb.append("  CLASS_").append(coName).append(": TGUID = '{").append(clsid()).append("}';\n");
         sb.append("  PROGID_").append(coName).append(" = '").append(progId).append("';\n\ntype\n");

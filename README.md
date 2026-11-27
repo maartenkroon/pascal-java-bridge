@@ -413,7 +413,8 @@ and `JavaToVariant` / `JavaFromVariant` do the conversions above.
 ## COM Automation, early binding (generated, Delphi)
 
 With `--com` (Maven: `<com>true</com>`), the generator also writes `<unit>Com.pas` and
-`<unit>ComServer.dpr` (single-unit mode only, for now). Together they make a COM server with a
+`<unit>ComServer.dpr`. With `--unit-per-package` there is still one `<unit>Com.pas` and one type
+library for all types; it uses the types unit and every package unit. Together they make a COM server with a
 type library, for clients that bind early: C#, VB6, C++, VBA with a reference, and PowerShell
 (which needs type info for properties).
 
@@ -512,7 +513,7 @@ GUIDs are name-based (unit and class names), so they stay the same across regene
   `-Xcheck:jni`, in both layouts. The test program also compiles with dcc32 (not run: no
   32-bit JVM). Run them with `mvn verify -Ddcc.executable=dcc64` (profile `delphi-tests`).
   That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (47
-  tests of the generated early binding), under `-Xcheck:jni`. With `-Dcom.scripts`, the
+  tests of the generated early binding, in both layouts), under `-Xcheck:jni`. With `-Dcom.scripts`, the
   late-bound server passes its VBScript (20), JScript (7) and PowerShell (8) tests, and the
   generated server its VBScript (8) and PowerShell + C# (23) tests.
   FPC on Windows has not been tested.

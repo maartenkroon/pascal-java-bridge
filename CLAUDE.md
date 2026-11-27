@@ -21,7 +21,7 @@ mvn -B verify                                                              # Jav
   ends with `ALL TESTS PASSED`.
 - Windows machine: Delphi 11 (`dcc64`/`dcc32` on the PATH), JDK 25 in `C:\Software`, no FPC.
   `mvn -B verify -Ddcc.executable=dcc64` (profile `delphi-tests`) does the same with Delphi,
-  output in `tests/target/delphi/{single,per-package}`; it also runs `TestCom` (single layout).
+  output in `tests/target/delphi/{single,per-package}`; it also runs `TestCom` (single layout) and `TestComEarly` (both).
   Both profiles can run in one build. `-Dcom.scripts` (profile `com-script-tests`) also runs
   `tests/src/test/script/RunComScripts.ps1`: registers the COM server DLL for the current user,
   runs the .vbs/.js/.ps1 tests, always unregisters. Never leave it registered. Delphi source files
@@ -65,7 +65,8 @@ mvn -B verify                                                              # Jav
   output from BindingGenerator's model (after `assignNames`): its own `Scope` (outer = the global
   one), a COM `Table` per interface chain (unique names, `claimProperty` also claims
   `Get_`/`Set_`, DISPIDs), `C_n` implementing methods mapped by resolution clauses. The Delphi
-  interface order must equal the `AddFunc` order (vtable). Single-unit mode only so far.
+  interface order must equal the `AddFunc` order (vtable). With `--unit-per-package` it is still
+  one COM unit and one type library; its `uses` adds every package unit (names are global).
 - `comserver/PascalJavaBridgeCom.dpr`: Delphi in-process COM server (hand-written class factory
   and `DllRegisterServer`/`DllInstall`, no TComObject/type library). CLSID is name-based
   (`pascal-java-bridge-com-clsid:PascalJavaBridge.JVM`); keep it stable. PowerShell sees no
@@ -74,7 +75,8 @@ mvn -B verify                                                              # Jav
 - `tests/`: demo Java classes (`demo.*`: `Torture` covers name collisions, `CallbackHost`
   covers callbacks) and `src/test/pascal/TestBindings.pas`; `TestCom.pas` (Delphi) tests
   JavaBridgeCom through `OleVariant` late binding, without COM registration; `TestComEarly.pas`
-  tests the generated `JDemoCom` (the single-unit `JDemo` is generated with `<com>true</com>`).
+  tests the generated `JDemoCom` in both layouts (both `JDemo`s are generated with `<com>true</com>`;
+  the per-package server is compiled only, since it has the same CLSID as the one the scripts register).
   `src/test/script/TestComEarly.ps1` converts the registered .tlb with .NET's `TypeLibConverter`
   (no tlbimp needed) and compiles a C# early-bound client with `Add-Type`.
 

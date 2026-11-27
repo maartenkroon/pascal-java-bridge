@@ -108,6 +108,7 @@
                 <configuration>
                   <unitPerPackage>true</unitPerPackage>
                   <outputDirectory>${pascal.generated.pp.dir}</outputDirectory>
+                  <com>true</com>
                 </configuration>
               </execution>
             </executions>
@@ -427,6 +428,68 @@
                   <environmentVariables>
                     <JAVA_HOME>${java.home}</JAVA_HOME>
                   </environmentVariables>
+                </configuration>
+              </execution>
+              <execution>
+                <id>dcc-compile-com-early-per-package</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${dcc.executable}</executable>
+                  <workingDirectory>${delphi.dir}/per-package</workingDirectory>
+                  <arguments>
+                    <argument>-B</argument>
+                    <argument>-Q</argument>
+                    <argument>-NSSystem</argument>
+                    <argument>-NU${delphi.dir}/per-package</argument>
+                    <argument>-E${delphi.dir}/per-package</argument>
+                    <argument>-U${pascal.generated.pp.dir}</argument>
+                    <argument>${project.basedir}/src/test/pascal/TestComEarly.pas</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
+                <id>delphi-test-com-early-per-package</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skipTests}</skip>
+                  <executable>${delphi.dir}/per-package/TestComEarly.exe</executable>
+                  <arguments>
+                    <argument>--checkjni</argument>
+                    <argument>--classpath</argument>
+                    <argument>${project.build.outputDirectory}</argument>
+                  </arguments>
+                  <environmentVariables>
+                    <JAVA_HOME>${java.home}</JAVA_HOME>
+                  </environmentVariables>
+                </configuration>
+              </execution>
+              <execution>
+                <!-- the generated server of the per-package JDemoCom: compiled only (it has the
+                     same CLSID and ProgID as the single-unit one, which the scripts test) -->
+                <id>dcc-compile-jdemo-com-server-per-package</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${dcc.executable}</executable>
+                  <workingDirectory>${delphi.dir}/jdemo-comserver-per-package</workingDirectory>
+                  <arguments>
+                    <argument>-B</argument>
+                    <argument>-Q</argument>
+                    <argument>-NSSystem</argument>
+                    <argument>-NU${delphi.dir}/jdemo-comserver-per-package</argument>
+                    <argument>-E${delphi.dir}/jdemo-comserver-per-package</argument>
+                    <argument>-U${pascal.generated.pp.dir}</argument>
+                    <argument>-I${pascal.generated.pp.dir}</argument>
+                    <argument>${pascal.generated.pp.dir}/JDemoComServer.dpr</argument>
+                  </arguments>
                 </configuration>
               </execution>
             </executions>

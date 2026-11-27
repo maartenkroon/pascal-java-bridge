@@ -2,8 +2,7 @@
 
 Status: written on 2026-11-27 so the work can continue on a Windows machine. Step 0 (Delphi
 compiles and passes the tests) is done. Part 1 is done, including the in-process COM server
-(decision 1: DLL). Part 2 is working in single-unit mode (see its progress section); per-package
-mode is still open.
+(decision 1: DLL). Part 2 is working in both layouts (see its progress section).
 
 ## Goal
 
@@ -186,8 +185,13 @@ from the plan above:
   interop assembly that .NET's `TypeLibConverter` makes from the registered `.tlb`, and it calls
   through the vtables.
 
-Still open for Part 2: `--com` with `--unit-per-package` (one type library over several units);
-early-bound callbacks with typed COM interfaces (now `Implement` takes any `IDispatch`); 32-bit;
+`--com` with `--unit-per-package` (2026-11-27): one `<unit>Com.pas` and one type library for all
+types, whose `uses` lists the types unit and every package unit. Generated names are global in
+that mode too, so the COM unit differs from the single-unit one only in its `uses` clause.
+`TestComEarly` passes against both layouts; the per-package server is compiled but not
+registered, because it has the same CLSID and ProgID as the single-unit one.
+
+Still open for Part 2: early-bound callbacks with typed COM interfaces (now `Implement` takes any `IDispatch`); 32-bit;
 VBA in Office; and returning the most specific wrapper for a result's run-time class (now the
 declared type is used; `Cast` converts).
 

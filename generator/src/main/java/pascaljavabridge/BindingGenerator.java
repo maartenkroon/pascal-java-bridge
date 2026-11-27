@@ -247,8 +247,6 @@ public final class BindingGenerator {
         if (o.unit == null || !o.unit.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))
             throw new IllegalArgumentException("Invalid or missing unit name: " + o.unit);
         if (o.includes.isEmpty()) throw new IllegalArgumentException("No classes or patterns given");
-        if (o.com && o.unitPerPackage)
-            throw new IllegalArgumentException("--com is not supported with --unit-per-package yet");
         List<URL> urls = new ArrayList<>();
         for (Path p : o.classpath) urls.add(p.toUri().toURL());
         // parent = platform loader: only the JDK and the given classpath are visible, never the
