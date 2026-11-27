@@ -265,6 +265,66 @@
                 </configuration>
               </execution>
               <execution>
+                <id>dcc-compile-com</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${dcc.executable}</executable>
+                  <workingDirectory>${delphi.dir}/single</workingDirectory>
+                  <arguments>
+                    <argument>-B</argument>
+                    <argument>-Q</argument>
+                    <argument>-NSSystem</argument>
+                    <argument>-NU${delphi.dir}/single</argument>
+                    <argument>-E${delphi.dir}/single</argument>
+                    <argument>-U${pascal.generated.dir}</argument>
+                    <argument>${project.basedir}/src/test/pascal/TestCom.pas</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
+                <id>delphi-test-com</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skipTests}</skip>
+                  <executable>${delphi.dir}/single/TestCom.exe</executable>
+                  <arguments>
+                    <argument>--checkjni</argument>
+                    <argument>--classpath</argument>
+                    <argument>${project.build.outputDirectory}</argument>
+                  </arguments>
+                  <environmentVariables>
+                    <JAVA_HOME>${java.home}</JAVA_HOME>
+                  </environmentVariables>
+                </configuration>
+              </execution>
+              <execution>
+                <id>dcc-compile-com-server</id>
+                <phase>test-compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>${dcc.executable}</executable>
+                  <workingDirectory>${delphi.dir}/comserver</workingDirectory>
+                  <arguments>
+                    <argument>-B</argument>
+                    <argument>-Q</argument>
+                    <argument>-NSSystem</argument>
+                    <argument>-NU${delphi.dir}/comserver</argument>
+                    <argument>-E${delphi.dir}/comserver</argument>
+                    <argument>-U${pascal.generated.dir}</argument>
+                    <argument>-I${pascal.generated.dir}</argument>
+                    <argument>${project.basedir}/../comserver/PascalJavaBridgeCom.dpr</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
                 <id>dcc-compile-per-package</id>
                 <phase>test-compile</phase>
                 <goals>
@@ -302,6 +362,48 @@
                   <environmentVariables>
                     <JAVA_HOME>${java.home}</JAVA_HOME>
                   </environmentVariables>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <!-- Test the COM server (built by delphi-tests) from VBScript, JScript and PowerShell. It
+         registers the DLL for the current user (HKCU) and unregisters it afterwards, so it only
+         runs on request: -Ddcc.executable=dcc64 -Dcom.scripts -->
+    <profile>
+      <id>com-script-tests</id>
+      <activation>
+        <property>
+          <name>com.scripts</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>com-scripts</id>
+                <phase>integration-test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skipTests}</skip>
+                  <executable>powershell</executable>
+                  <arguments>
+                    <argument>-NoProfile</argument>
+                    <argument>-ExecutionPolicy</argument>
+                    <argument>Bypass</argument>
+                    <argument>-File</argument>
+                    <argument>${project.basedir}/src/test/script/RunComScripts.ps1</argument>
+                    <argument>${project.build.directory}/delphi/comserver/PascalJavaBridgeCom.dll</argument>
+                    <argument>${project.build.outputDirectory}</argument>
+                    <argument>${java.home}/bin/server/jvm.dll</argument>
+                  </arguments>
                 </configuration>
               </execution>
             </executions>

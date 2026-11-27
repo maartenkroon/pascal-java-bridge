@@ -261,6 +261,9 @@ function JrArgValue(Args: jarray; Index: Integer; Kind: TJavaKind): jvalue;
 { Boxes a primitive (Integer.valueOf etc.); returns a local reference. }
 function JrBox(const Value: jvalue; Kind: TJavaKind): jobject;
 function JrNewLocalRef(Ref: jobject): jobject;
+{ Defines a class from its bytecode in the system class loader, unless a class
+  of that name already exists there; returns a global reference. }
+function JrDefineClass(Name: PAnsiChar; Bytes: Pointer; Len: Integer): jclass;
 
 { Number of Pascal callback objects currently referenced from Java. They are
   released (on Java's Cleaner thread) after Java garbage-collects the proxy. }
@@ -1340,11 +1343,45 @@ begin
   TFnObj(Env^^[FN_DeleteLocalRef])(Env, L);
 end;
 
+{ Local reference to the system class loader. }
+function SystemClassLoader(Env: PJNIEnv): jobject;
+var
+  ClsLoader: jclass;
+  Mid: jmethodID;
+begin
+  ClsLoader := FindClassGlobal(Env, 'java/lang/ClassLoader');
+  try
+    Mid := TFnGetMember(Env^^[FN_GetStaticMethodID])(Env, ClsLoader,
+      'getSystemClassLoader', '()Ljava/lang/ClassLoader;');
+    Result := JrCall(ClsLoader, Mid, nil, jkObject, True).l;
+  finally
+    TFnObj(Env^^[FN_DeleteGlobalRef])(Env, ClsLoader);
+  end;
+end;
+
+function JrDefineClass(Name: PAnsiChar; Bytes: Pointer; Len: Integer): jclass;
+var
+  Env: PJNIEnv;
+  Loader: jobject;
+begin
+  Env := JrEnv;
+  GLock.Acquire;
+  try
+    Loader := SystemClassLoader(Env);
+    try
+      Result := DefineHandlerClass(Env, Loader, Name, Bytes, Len);
+    finally
+      JrDeleteLocal(Loader);
+    end;
+  finally
+    GLock.Release;
+  end;
+end;
+
 procedure EnsureCallbackSupport;
 var
   Env: PJNIEnv;
-  ClsLoader, Loader: jobject;
-  Mid: jmethodID;
+  Loader: jobject;
   Cls: jclass;
   Natives: array[0..1] of TJavaNativeMethod;
 begin
@@ -1355,11 +1392,7 @@ begin
     if GHandlerCls <> nil then
       Exit;
     Env := JrEnv;
-    ClsLoader := FindClassGlobal(Env, 'java/lang/ClassLoader');
-    Mid := TFnGetMember(Env^^[FN_GetStaticMethodID])(Env, ClsLoader,
-      'getSystemClassLoader', '()Ljava/lang/ClassLoader;');
-    Loader := JrCall(ClsLoader, Mid, nil, jkObject, True).l;
-    TFnObj(Env^^[FN_DeleteGlobalRef])(Env, ClsLoader);
+    Loader := SystemClassLoader(Env);
 
     Cls := DefineHandlerClass(Env, Loader, HANDLER_NAME_0, @HANDLER_BYTES_0[0],
       Length(HANDLER_BYTES_0));

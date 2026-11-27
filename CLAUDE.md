@@ -21,7 +21,11 @@ mvn -B verify                                                              # Jav
   ends with `ALL TESTS PASSED`.
 - Windows machine: Delphi 11 (`dcc64`/`dcc32` on the PATH), JDK 25 in `C:\Software`, no FPC.
   `mvn -B verify -Ddcc.executable=dcc64` (profile `delphi-tests`) does the same with Delphi,
-  output in `tests/target/delphi/{single,per-package}`. Both profiles can run in one build.
+  output in `tests/target/delphi/{single,per-package}`; it also runs `TestCom` (single layout).
+  Both profiles can run in one build. `-Dcom.scripts` (profile `com-script-tests`) also runs
+  `tests/src/test/script/RunComScripts.ps1`: registers the COM server DLL for the current user,
+  runs the .vbs/.js/.ps1 tests, always unregisters. Never leave it registered. Delphi source files
+  without a BOM are read as ANSI: use `#$xxxx` for non-ASCII characters in string literals.
 - Quick generator iteration: `mvn -q -B install -pl generator -Dmaven.install.skip=true`, then
   `java -jar generator/target/pascal-java-bridge-generator-0.1.0-SNAPSHOT.jar --unit X --out <dir> --with-runtime ...`
   and compile with `fpc.sh -vwn -Sew -FU<dir> -Fu<dir>`. Keep scratch output out of the repo.
@@ -36,14 +40,29 @@ mvn -B verify                                                              # Jav
   from the compiled `PascalInvocationHandler` bytecode. It is committed and only rewritten when
   its content changes. If it shows up as modified without handler changes, Eclipse (ECJ) probably
   compiled `handler/target/classes`; `mvn clean` restores it.
+- `runtime/JavaBridgeCom.pas` (Delphi/Windows only, not used by generated code): late-bound
+  `IDispatch` over Java objects (`TJavaDispatch`), the entry object `JavaComJVM` and
+  `Implement` callbacks. `runtime/JavaBridgeDynamic.inc` is generated the same way from
+  `pascaljavabridge.dynamic.DynamicInvoker` (writer args: `<classes> <inc> <pkg-dir> DYNAMIC <src>`),
+  defined through `JrDefineClass`. Its `{$IF DYNAMIC_CLASS_COUNT <> 3}` guard must follow the
+  number of (nested) classes. Both are in `RUNTIME_FILES`, so `--with-runtime` copies them.
 - `handler/`: `pascaljavabridge.internal.PascalInvocationHandler` (Proxy-based callbacks; natives
-  `invoke0`/`release0` are registered from Pascal; Cleaner releases the Pascal object).
+  `invoke0`/`release0` are registered from Pascal; Cleaner releases the Pascal object), and
+  `pascaljavabridge.dynamic.DynamicInvoker` (member lookup by name, run-time overload choice,
+  value conversion for COM). It uses `MethodHandles.publicLookup()` with the accessible
+  reference class (so public methods of non-public classes work) and `asFixedArity()` (it packs
+  varargs itself).
 - `generator/`: `pascaljavabridge.BindingGenerator`, a single file (~1,400 lines). It is both the
   CLI (`main`) and the API (`Options`, `generate`) the Maven plugin uses. The jar bundles the
   runtime files as resources (`pascaljavabridge/runtime/`).
+- `comserver/PascalJavaBridgeCom.dpr`: Delphi in-process COM server (hand-written class factory
+  and `DllRegisterServer`/`DllInstall`, no TComObject/type library). CLSID is name-based
+  (`pascal-java-bridge-com-clsid:PascalJavaBridge.JVM`); keep it stable. PowerShell sees no
+  properties without type info, so every entry member also works as a method call.
 - `maven-plugin/`: `GenerateMojo` (`pascal-java-bridge:generate`, phase `process-classes`).
 - `tests/`: demo Java classes (`demo.*`: `Torture` covers name collisions, `CallbackHost`
-  covers callbacks) and `src/test/pascal/TestBindings.pas`.
+  covers callbacks) and `src/test/pascal/TestBindings.pas`; `TestCom.pas` (Delphi) tests
+  JavaBridgeCom through `OleVariant` late binding, without COM registration.
 
 ## Generated code model (keep these invariants)
 

@@ -1,8 +1,8 @@
 # Design note: COM / Automation for Delphi
 
-Status: **proposal, not implemented.** Written on 2026-11-27 so the work can continue on a
-Windows machine. Step 0 (Delphi compiles and passes the tests) is done; Parts 1 and 2 are not
-started.
+Status: written on 2026-11-27 so the work can continue on a Windows machine. Step 0 (Delphi
+compiles and passes the tests) is done. Part 1 is done, including the in-process COM server
+(decision 1: DLL). Part 2 is not started.
 
 ## Goal
 
@@ -69,6 +69,47 @@ This needs no generated code. It is all runtime, in a new unit (e.g. `runtime/Ja
   calls go to the client's `IDispatch.Invoke` by method name. This reuses `JrCreateProxy` with a
   dispatcher that forwards to IDispatch.
 
+**Progress (2026-11-27):** everything above except the registration, in
+`runtime/JavaBridgeCom.pas`. `tests/src/test/pascal/TestCom.pas` has 65 tests that drive it
+through Delphi `OleVariant` late binding and pass under `-Xcheck:jni` (profile `delphi-tests`).
+How it works, and how it differs from the plan:
+
+- The reflection and overload choice run **in Java**, in `pascaljavabridge.dynamic.DynamicInvoker`
+  (`handler` module, embedded as `runtime/JavaBridgeDynamic.inc` like the callback handler, and
+  defined through the new `JrDefineClass`). That is far less code than JNI reflection from Pascal.
+  Pascal only converts VARIANTs to boxed Java values and back.
+- DISPIDs are global per (case-sensitive) name, and `memberId` checks that the class has the
+  member. Calls go through `MethodHandles.publicLookup()` with the most specific accessible type as
+  the reference class, so `list.iterator().next()` works although the iterator class is private.
+- Overload cost: exact < widening < narrowing that fits < whole `Double` to an integer type;
+  `Object` parameters cost more than specific ones; varargs last.
+- Additions: `Running`, `JvmPath`, `DISPID_VALUE` (`get`/`set`/`toString`), `_NewEnum` (For Each),
+  `Implement` falls back to the COM object's default member (JScript functions, `GetRef`), and
+  `TJavaDispatch` implements `IJavaHandle`, so it passes straight back to Java.
+- COM threading, decided: an `Implement`ed COM object is only called on the thread that passed it
+  (another Java thread gets a `RuntimeException`). Its release after Java GC (on the Cleaner
+  thread) is queued for that thread and done on its next call into the unit, so no COM pointer
+  crosses threads. Marshalling through the GIT would allow other threads but deadlocks when the
+  STA thread is waiting in Java.
+
+**COM server (2026-11-27, decision 1: in-process DLL):** `comserver/PascalJavaBridgeCom.dpr`.
+It has a hand-written class factory that returns `JavaComJVM`, and `DllRegisterServer` (HKLM)
+plus `DllInstall` (`regsvr32 /n /i:user`, HKCU). There is no TComObject and no type library.
+The CLSID `{2867DDA4-DC6B-321C-8D65-4514D273A5E5}` is name-based. The threading model is `Both`,
+because the objects attach any thread to the JVM. `DllCanUnloadNow` always says no, because a
+loaded JVM can't be unloaded. Tested from `cscript` (VBScript: 20 tests, JScript: 7) and Windows
+PowerShell (8) through `tests/src/test/script/RunComScripts.ps1`, which registers for the
+current user, runs them, and unregisters (`-Dcom.scripts`). Found on the way:
+
+- A JScript function has its own `apply` and `call` members, so `Implement` treats an object with
+  both as a function and always calls its default member.
+- PowerShell reads and writes COM properties only through type info (they come back `$null`).
+  Reading members as methods works, so `JvmPath(path)` also sets the path. Part 2's type library
+  would fix this.
+
+Not tested: VBA in Office (running VBA from a test needs Office's macro trust settings changed)
+and a 32-bit build (no 32-bit JDK here). VBA uses the same IDispatch calls as VBScript.
+
 ## Part 2: early binding (generated)
 
 A new generator option (e.g. `--com`, Maven `<com>true</com>`) that additionally writes:
@@ -121,7 +162,7 @@ A new generator option (e.g. `--com`, Maven `<com>true</com>`) that additionally
 
 ## Open decisions (for the user)
 
-1. **In-process DLL vs out-of-process EXE server.**
+1. **In-process DLL vs out-of-process EXE server.** Decided: in-process DLL.
    - In-proc: fast (~100 ns per call + COM overhead). It loads the JVM into the host process
      (e.g. Excel): only one JVM per process, the JVM's bitness must match the host's (64-bit
      Office needs a 64-bit JDK), and a JVM crash kills the host.

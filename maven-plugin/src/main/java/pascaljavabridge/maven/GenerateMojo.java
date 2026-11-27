@@ -65,7 +65,7 @@ public class GenerateMojo extends AbstractMojo {
             defaultValue = "${project.build.directory}/generated-sources/pascal")
     private File outputDirectory;
 
-    /** Also write the Pascal runtime (JavaBridge.pas, JavaBridgeHandler.inc) to the output directory. */
+    /** Also write the Pascal runtime (JavaBridge.pas, JavaBridgeCom.pas and their .inc files) to the output directory. */
     @Parameter(property = "pascal.withRuntime", defaultValue = "true")
     private boolean withRuntime;
 

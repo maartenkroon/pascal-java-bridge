@@ -86,7 +86,7 @@ public final class BindingGenerator {
             "jrtakebytearray", "jrtakechararray", "jrtakeshortarray", "jrtakeintarray",
             "jrtakelongarray", "jrtakefloatarray", "jrtakedoublearray", "jrtakestringarray",
             "jrtakeobjectarray", "tjavadispatchfunc", "jrcreateproxy", "jrargvalue", "jrbox",
-            "jrnewlocalref", "javacallbackcount"));
+            "jrnewlocalref", "jrdefineclass", "javacallbackcount"));
 
     /**
      * TJavaObjectImpl members that generated bodies call on impl classes. Interface methods may
@@ -222,7 +222,7 @@ public final class BindingGenerator {
         public List<String> excludes = new ArrayList<>();
         /** Also wrap types referenced by the selected classes, this many levels deep. */
         public int depth;
-        /** Also write the Pascal runtime (JavaBridge.pas, JavaBridgeHandler.inc). */
+        /** Also write the Pascal runtime ({@link #RUNTIME_FILES}). */
         public boolean withRuntime;
         /**
          * Write the interface types to the unit {@link #unit} and the records and implementation
@@ -234,7 +234,8 @@ public final class BindingGenerator {
     }
 
     /** Runtime files shipped in the generator jar (see generator/pom.xml). */
-    public static final List<String> RUNTIME_FILES = List.of("JavaBridge.pas", "JavaBridgeHandler.inc");
+    public static final List<String> RUNTIME_FILES = List.of("JavaBridge.pas", "JavaBridgeHandler.inc",
+            "JavaBridgeCom.pas", "JavaBridgeDynamic.inc");
 
     /** Generates the unit(s); returns the path of the written .pas file (the types unit). */
     public static Path generate(Options o) throws Exception {
@@ -330,7 +331,7 @@ public final class BindingGenerator {
                   --exclude       leave out classes matching the pattern (repeatable)
                   --depth n       also wrap the public types referenced by the selected classes,
                                   up to n levels deep (default 0)
-                  --with-runtime  also write the Pascal runtime unit (JavaBridge.pas + .inc)
+                  --with-runtime  also write the Pascal runtime (JavaBridge.pas, JavaBridgeCom.pas, .inc)
                   --unit-per-package
                                   write the interface types to <PascalUnitName> and the records
                                   and implementation code to one unit per Java package, named

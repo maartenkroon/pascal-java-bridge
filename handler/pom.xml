@@ -12,8 +12,10 @@
 
   <artifactId>pascal-java-bridge-handler</artifactId>
   <name>pascal-java-bridge handler</name>
-  <description>Java side of the Java-to-Pascal callbacks. Its bytecode is embedded in the Pascal
-    runtime (runtime/JavaBridgeHandler.inc), so this jar is never needed at runtime.</description>
+  <description>Java side of the Java-to-Pascal callbacks and of the late-bound COM support. Its
+    bytecode is embedded in the Pascal
+    runtime (runtime/JavaBridgeHandler.inc, runtime/JavaBridgeDynamic.inc), so this jar is never
+    needed at runtime.</description>
 
   <build>
     <plugins>
@@ -37,6 +39,25 @@
               <arguments>
                 <argument>${project.build.outputDirectory}</argument>
                 <argument>${pascal.runtime.dir}/JavaBridgeHandler.inc</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <?m2e ignore?>
+            <id>write-pascal-include-dynamic</id>
+            <phase>process-classes</phase>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>pascaljavabridge.build.HandlerIncludeWriter</mainClass>
+              <classpathScope>compile</classpathScope>
+              <arguments>
+                <argument>${project.build.outputDirectory}</argument>
+                <argument>${pascal.runtime.dir}/JavaBridgeDynamic.inc</argument>
+                <argument>pascaljavabridge/dynamic</argument>
+                <argument>DYNAMIC</argument>
+                <argument>pascaljavabridge/dynamic/DynamicInvoker.java</argument>
               </arguments>
             </configuration>
           </execution>
