@@ -78,6 +78,147 @@ begin
   Result := S_OK;
 end;
 
+{ Typed callbacks: Delphi objects implementing the generated IJ...CallbackDisp
+  interfaces. Their IDispatch fails, so the calls must go through the vtables. }
+var
+  GTypedDestroyed: Integer = 0;
+
+type
+  TNoDispatch = class(TInterfacedObject)
+  public
+    destructor Destroy; override;
+    function GetTypeInfoCount(out Count: Integer): HResult; stdcall;
+    function GetTypeInfo(Index, LocaleID: Integer; out TypeInfo): HResult; stdcall;
+    function GetIDsOfNames(const IID: TGUID; Names: Pointer;
+      NameCount, LocaleID: Integer; DispIDs: Pointer): HResult; stdcall;
+    function Invoke(DispID: Integer; const IID: TGUID; LocaleID: Integer;
+      Flags: Word; var Params; VarResult, ExcepInfo, ArgErr: Pointer): HResult; stdcall;
+  end;
+
+  TTypedRunner = class(TNoDispatch, IDispatch, IJRunnableCallbackDisp)
+  public
+    Calls: Integer;
+    Fail: Boolean;
+    procedure run; safecall;
+  end;
+
+  TTypedCalc = class(TNoDispatch, IDispatch, IJCallbackHost_CalculatorCallbackDisp)
+  public
+    Entry: IJDemoEntry;
+    function apply(p0: Integer; p1: Integer): Integer; safecall;
+    function &name: WideString; safecall;
+    function range(p0: Integer): OleVariant; safecall;
+    function scale(p0: Double): Double; safecall;
+    function test(p0: Int64; const p1: WideString): WordBool; safecall;
+    function wrap(const p0: WideString): IJListDisp; safecall;
+  end;
+
+  TTypedComparator = class(TNoDispatch, IDispatch, IJComparatorCallbackDisp)
+  public
+    function compare(const p0: OleVariant; const p1: OleVariant): Integer; safecall;
+  end;
+
+  TTypedSource = class(TNoDispatch, IDispatch, IJCallbackHost_SourceCallbackDisp)
+  public
+    function items(p0: Integer): OleVariant; safecall;
+  end;
+
+function TTypedSource.items(p0: Integer): OleVariant;
+begin
+  Result := VarArrayOf(['a', p0]);
+end;
+
+destructor TNoDispatch.Destroy;
+begin
+  Inc(GTypedDestroyed);
+  inherited;
+end;
+
+function TNoDispatch.GetTypeInfoCount(out Count: Integer): HResult;
+begin
+  Count := 0;
+  Result := E_NOTIMPL;
+end;
+
+function TNoDispatch.GetTypeInfo(Index, LocaleID: Integer; out TypeInfo): HResult;
+begin
+  Pointer(TypeInfo) := nil;
+  Result := E_NOTIMPL;
+end;
+
+function TNoDispatch.GetIDsOfNames(const IID: TGUID; Names: Pointer;
+  NameCount, LocaleID: Integer; DispIDs: Pointer): HResult;
+begin
+  Result := E_NOTIMPL;
+end;
+
+function TNoDispatch.Invoke(DispID: Integer; const IID: TGUID; LocaleID: Integer;
+  Flags: Word; var Params; VarResult, ExcepInfo, ArgErr: Pointer): HResult;
+begin
+  Result := E_NOTIMPL;
+end;
+
+procedure TTypedRunner.run;
+begin
+  Inc(Calls);
+  if Fail then
+    raise Exception.Create('typed failure');
+end;
+
+function TTypedCalc.apply(p0: Integer; p1: Integer): Integer;
+begin
+  Result := p0 + p1;
+end;
+
+function TTypedCalc.&name: WideString;
+begin
+  Result := 'typed';
+end;
+
+function TTypedCalc.range(p0: Integer): OleVariant;
+var
+  I: Integer;
+begin
+  Result := VarArrayCreate([0, p0 - 1], varInteger);
+  for I := 0 to p0 - 1 do
+    Result[I] := I * I;
+end;
+
+function TTypedCalc.scale(p0: Double): Double;
+begin
+  Result := p0 * 2;
+end;
+
+function TTypedCalc.test(p0: Int64; const p1: WideString): WordBool;
+begin
+  Result := (p0 = 5) and (p1 = 'x');
+end;
+
+function TTypedCalc.wrap(const p0: WideString): IJListDisp;
+var
+  A: IJArrayListDisp;
+begin
+  A := Entry.ArrayList.New;
+  A.add(p0 + p0);
+  Result := Entry.List.Cast(A);
+end;
+
+function TTypedComparator.compare(const p0: OleVariant; const p1: OleVariant): Integer;
+begin
+  Result := Integer(p1) - Integer(p0);   { descending }
+end;
+
+{ In a procedure of its own, so no hidden temporary keeps the proxy alive. }
+procedure TypedCallbackForGc(const E: IJDemoEntry);
+var
+  R: IJRunnableDisp;
+  D: IDispatch;
+begin
+  D := TTypedRunner.Create;
+  R := E.Runnable.Implement(D);
+  E.CallbackHost.runCatching(R);
+end;
+
 function TypeName(const D: IDispatch): string;
 var
   TI: ITypeInfo;
@@ -93,7 +234,7 @@ var
   T: IJTortureDisp;
   B: IJBaseDisp;
   L: IJListDisp;
-  AL: IJArrayListDisp;
+  AL, Sorted: IJArrayListDisp;
   M: IJHashMapDisp;
   SB: IJStringBuilderDisp;
   R: IJRunnableDisp;
@@ -102,6 +243,11 @@ var
   Fetched: LongWord;
   Runner: TRunner;
   RunnerIntf: IDispatch;
+  TypedRunner: TTypedRunner;
+  Calc: TTypedCalc;
+  D: IDispatch;
+  S: string;
+  Destroyed: Integer;
   Lib: ITypeLib;
   LibB: TJavaTypeLibBuilder;
   LibFile: string;
@@ -186,6 +332,40 @@ begin
     R := E.Runnable.Implement(RunnerIntf);
     Check(E.CallbackHost.runCatching(R) = 'no exception', 'Implement: COM object as java.lang.Runnable');
     Check(Runner.Calls = 1, 'COM object called');
+
+    WriteLn('Typed callbacks (vtable)');
+    TypedRunner := TTypedRunner.Create;
+    D := TypedRunner;
+    R := E.Runnable.Implement(D);
+    Check(E.CallbackHost.runCatching(R) = 'no exception', 'IJRunnableCallbackDisp as java.lang.Runnable');
+    Check(TypedRunner.Calls = 1, 'called through the vtable (its IDispatch fails)');
+    TypedRunner.Fail := True;
+    Check(Pos('RuntimeException', string(E.CallbackHost.runCatching(R))) > 0,
+      'exception in a typed callback -> Java RuntimeException');
+    TypedRunner.Fail := False;
+    R := nil;
+    D := nil;
+    Calc := TTypedCalc.Create;
+    Calc.Entry := E;
+    D := Calc;
+    Calc := nil;
+    S := E.CallbackHost.useCalculator(E.CallbackHost_Calculator.Implement(D));
+    Check(Copy(S, 1, 35) ='5,3.0,true,calc:typed,[0, 1, 4],ww,', 'typed callback: all parameter and result types');
+    D := TTypedComparator.Create;
+    Sorted := E.ArrayList.New;
+    Sorted.add(1); Sorted.add(3); Sorted.add(2);
+    Sorted.sort(E.Comparator.Implement(D));
+    D := nil;
+    Check(Sorted.toString = '[3, 2, 1]', 'typed Comparator (VARIANT parameters)');
+    D := TTypedSource.Create;
+    Check(E.CallbackHost.joinItems(E.CallbackHost_Source.Implement(D), 7) = '[a, 7]',
+      'typed callback returning Object[]');
+    D := nil;
+    Destroyed := GTypedDestroyed;
+    TypedCallbackForGc(E);
+    E.CallbackHost.gc;
+    JavaComReleasePending;
+    Check(GTypedDestroyed > Destroyed, 'typed callback released after Java GC');
 
     WriteLn('Late binding through the type library');
     V := T as IDispatch;

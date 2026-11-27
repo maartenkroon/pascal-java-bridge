@@ -425,6 +425,7 @@ What is generated, per Java type `Foo`:
 | `IJFooDisp` | dual interface (vtable and `IDispatch`) with the instance members; same parent chain as `IJFoo` |
 | `IJFooClass` | constructors (`New`, `New_1`, ...), static methods, static fields, `Cast`, `IsInstance`, and `Implement` for interfaces with abstract methods |
 | `TJFooAuto`, `TJFooClassAuto` | the implementing classes, which delegate to `IJFoo` / `TJFoo` |
+| `IJFooCallbackDisp` | for interfaces with abstract methods (as `IJFooCallback`): a dual interface with just those methods, for COM clients to implement |
 
 Per unit, there is an entry interface `I<unit>Entry` (coclass `<unit>`, ProgID
 `PascalJavaBridge.<unit>`). It has `Start(classPath, options)`, `Running` and `JvmPath`, plus one
@@ -469,8 +470,21 @@ Rules:
 * **Type library**: built at run time through `ICreateTypeLib2` (unit `JavaBridgeAuto`). `IDispatch`
   uses the in-memory copy. Registering the server writes `<server>.tlb` next to the DLL and
   registers it. No `midl` or other tools are needed, and the generator still runs on any OS.
-* **Callbacks**: `IJRunnableClass.Implement(comObject)` returns an `IJRunnableDisp` whose calls go
-  to the COM object by name, as with late binding.
+* **Callbacks**: `IJRunnableClass.Implement(comObject)` returns an `IJRunnableDisp`. If the COM
+  object implements `IJRunnableCallbackDisp`, Java's calls go through its vtable, with the typed
+  parameters above. Otherwise they go to the object by name, as with late binding (script
+  objects). Either way the object is only called on the thread that passed it to `Implement`.
+  ```csharp
+  public class Listener : IJCallbackHost_ListenerCallbackDisp {
+      public void onEvent(string name, int value) { Console.WriteLine(name + "=" + value); }
+  }
+  host.addListener(jdemo.CallbackHost_Listener.Implement(new Listener()));
+  ```
+  An exception thrown by the COM object reaches Java as a `RuntimeException` with its message.
+* **Name spelling**: a type library stores one spelling per name, case-insensitively. The first
+  one added wins, so in `JDemo` the entry's `List` property is spelled `list` (after
+  `Torture.list()`) in the type library and in interop assemblies made from it. VBScript, VBA
+  and Delphi don't care; in C# and C++, use the spelling the type library has.
 
 Build and register the server like the late-bound one:
 
@@ -512,10 +526,10 @@ GUIDs are name-based (unit and class names), so they stay the same across regene
 * Tested with **Delphi 11** (dcc64) on Windows x64 and **JDK 25**: the same 75 tests pass, with
   `-Xcheck:jni`, in both layouts. The test program also compiles with dcc32 (not run: no
   32-bit JVM). Run them with `mvn verify -Ddcc.executable=dcc64` (profile `delphi-tests`).
-  That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (47
+  That profile also runs `TestCom` (65 tests of the COM late binding) and `TestComEarly` (55
   tests of the generated early binding, in both layouts), under `-Xcheck:jni`. With `-Dcom.scripts`, the
   late-bound server passes its VBScript (20), JScript (7) and PowerShell (8) tests, and the
-  generated server its VBScript (8) and PowerShell + C# (23) tests.
+  generated server its VBScript (8) and PowerShell + C# (26) tests.
   FPC on Windows has not been tested.
 * Callbacks can implement Java **interfaces** only, not abstract classes
   (`java.lang.reflect.Proxy` cannot extend classes).

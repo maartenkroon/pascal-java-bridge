@@ -23,6 +23,9 @@ import pascaljavabridge.BindingGenerator.TInfo;
  * {@code IJFoo}) and {@code IJFooClass} (constructors New, New_1, ..., statics, Cast, IsInstance,
  * Implement), implemented by {@code TJFooAuto} / {@code TJFooClassAuto}, which delegate to
  * {@code IJFoo} / {@code TJFoo};</li>
+ * <li>per callback type (as {@code IJFooCallback}) a dual interface {@code IJFooCallbackDisp} with
+ * the abstract methods, for clients to implement: {@code Implement} calls such an object through
+ * its vtable (a generated {@code ComDispatch_Foo}), any other object by name;</li>
  * <li>an entry interface and coclass ({@code I<unit>Entry}, ProgID {@code PascalJavaBridge.<unit>})
  * with Start, Running, JvmPath and one property per type returning its class object;</li>
  * <li>the type library description ({@code <unit>TypeLib} builds it in memory for IDispatch; a COM
@@ -58,7 +61,9 @@ final class ComGenerator {
             "jrshortarraytovar", "jrintarraytovar", "jrlongarraytovar", "jrfloatarraytovar",
             "jrdoublearraytovar", "jrstringarraytovar", "jrobjectarraytovar", "olevariant",
             "widestring", "wordbool", "idispatch", "iunknown", "itypelib", "tguid", "winapi", "activex",
-            "syncobjs", "tcriticalsection", "lr", "lb");
+            "syncobjs", "tcriticalsection", "lr", "lb", "lt", "lc", "lv", "javacomimplementtyped",
+            "javacomtypedtarget", "tjavadispatchfunc", "jvalue", "jarray", "jobject", "jclass", "atarget", "aindex",
+            "aargs");
 
     enum Kind { METHOD, GET, PUT }
 
@@ -79,6 +84,7 @@ final class ComGenerator {
         CType ret;             // null for none
         Member member;         // the Java member (null for specials)
         String special;        // body of a special function, or null
+        String vars;           // extra local variables of a special function, or null
         String property;       // property name for GET/PUT pairs (Delphi property declaration)
     }
 
@@ -119,6 +125,11 @@ final class ComGenerator {
             clsAuto = new HashMap<>();
     final Map<TInfo, List<Func>> inst = new LinkedHashMap<>(), stat = new LinkedHashMap<>();
     final Map<TInfo, Table> tables = new HashMap<>();
+    /** Typed callbacks, per callback type: the dual interface IJFooCallbackDisp a client implements
+     *  (its funcs in vtable order, and in dispatch order = cbMethods order) and the dispatch
+     *  function. */
+    final Map<TInfo, String> cbDisp = new HashMap<>(), typedDispatch = new HashMap<>();
+    final Map<TInfo, List<Func>> cbFuncs = new LinkedHashMap<>(), cbDispatchOrder = new HashMap<>();
     final List<Func> entry = new ArrayList<>();
     final Map<Func, TInfo> entryType = new HashMap<>();
     String entryIntf, entryClass, typeLibFn, describeFn, makerFn, entryFn, libVar, lockVar, coName, progId;
@@ -156,6 +167,12 @@ final class ComGenerator {
         lockVar = scope.claim("G" + u + "TypeLibLock");
         coName = u;
         progId = "PascalJavaBridge." + unit;
+        for (TInfo t : g.sortedTypes())
+            if (t.hasCallback()) {
+                cbDisp.put(t, scope.claim("IJ" + t.base + "CallbackDisp"));
+                typedDispatch.put(t, scope.claim("ComDispatch_" + t.base));
+            }
+        classesVar = scope.claim("G" + u + "ComClasses");
 
         for (TInfo t : order) {
             Table tab = t.parent == null ? new Table() : tables.get(t.parent).copy();
@@ -203,6 +220,7 @@ final class ComGenerator {
                 fs.add(f);
             }
             inst.put(t, fs);
+            if (cbDisp.containsKey(t)) callbackFuncs(t);
             stat.put(t, classFuncs(t));
         }
         // entry object
@@ -323,8 +341,20 @@ final class ComGenerator {
             impl.dispId = tab.nextDispId++;
             impl.params.add(new CType("IDispatch", "DISPATCH", null, null));
             impl.ret = ctype(t.cls);
-            impl.special = resultOut(t.cls, rec + ".Cast(JavaComImplement("
-                    + BindingGenerator.pasStr(t.cls.getName()) + ", p0))");
+            String name = BindingGenerator.pasStr(t.cls.getName());
+            String late = rec + ".Cast(JavaComImplement(" + name + ", p0))";
+            if (!cbDisp.containsKey(t)) {
+                impl.special = resultOut(t.cls, late);
+            } else {
+                // the client implements IJFooCallbackDisp: call it through the vtable, else by name
+                String sigs = t.cbMethods.stream().map(m -> m.javaName + m.jniSig)
+                        .collect(java.util.stream.Collectors.joining("\n"));
+                impl.vars = "  LT: " + cbDisp.get(t) + ";\n";
+                impl.special = "  if System.SysUtils.Supports(p0, " + cbDisp.get(t) + ", LT) then\n    LR := " + rec
+                        + ".Cast(JavaComImplementTyped(" + name + ", LT, " + typedDispatch.get(t) + ",\n      "
+                        + BindingGenerator.pasStr(sigs) + "))\n  else\n    LR := " + late + ";\n"
+                        + wrapResult(t, "LR");
+            }
             fs.add(impl);
         }
         Map<String, Func> getters = new HashMap<>();
@@ -358,6 +388,115 @@ final class ComGenerator {
             }
         }
         return fs;
+    }
+
+    /** Class slots of this unit (JNI name -> index): element classes of object arrays returned by
+     *  typed callbacks. */
+    final Map<String, Integer> classSlots = new LinkedHashMap<>();
+    String classesVar;
+
+    /** The members of IJFooCallbackDisp: t's abstract methods, named in COM order. */
+    void callbackFuncs(TInfo t) {
+        for (Member m : t.cbMethods)
+            if (m.ret.isArray() && !m.ret.getComponentType().isPrimitive() && m.ret.getComponentType() != String.class)
+                classSlots.computeIfAbsent(BindingGenerator.c2jni(m.ret.getComponentType()), k -> classSlots.size());
+        Table tab = new Table();
+        Map<Member, Func> byMember = new HashMap<>();
+        List<Func> fs = new ArrayList<>();
+        for (Member m : comOrder(t.cbMethods)) {
+            Func f = func(tab.claim(BindingGenerator.mangle(m.javaName)), Kind.METHOD);
+            f.dispId = tab.nextDispId++;
+            f.member = m;
+            for (Class<?> p : m.params) f.params.add(ctype(p));
+            f.ret = m.ret == void.class ? null : ctype(m.ret);
+            fs.add(f);
+            byMember.put(m, f);
+        }
+        cbFuncs.put(t, fs);
+        List<Func> order = new ArrayList<>();
+        for (Member m : t.cbMethods) order.add(byMember.get(m));
+        cbDispatchOrder.put(t, order);
+    }
+
+    /** Pascal value of Java argument LV (from JrArgValue) of type c. */
+    String pasFromJava(Class<?> c) {
+        if (c.isPrimitive()) return switch (c.getName()) {
+            case "boolean" -> "(LV.z <> 0)";
+            case "char" -> "WideChar(LV.c)";
+            default -> "LV." + BindingGenerator.jvalueField(c);
+        };
+        if (c == String.class) return "JrTakeString(LV.l)";
+        if (c.isArray()) {
+            Class<?> e = c.getComponentType();
+            if (e.isPrimitive()) return "JrTake" + BindingGenerator.cap(e.getName()) + "Array(LV.l)";
+            if (e == String.class) return "JrTakeStringArray(LV.l)";
+            return "JrTakeObjectArray(LV.l)";
+        }
+        TInfo t = g.types.get(c);
+        if (t != null && c != Object.class) return t.comp + ".Cast(JavaWrapLocal(LV.l))";
+        return "JavaWrapLocal(LV.l)";
+    }
+
+    /** The dispatch function of a typed callback: Java arguments to COM, the client's vtable, back. */
+    void emitTypedDispatch(StringBuilder sb, TInfo t) {
+        List<Func> fs = cbDispatchOrder.get(t);
+        sb.append("function ").append(typedDispatch.get(t))
+          .append("(const ATarget: IInterface; AIndex: Integer; AArgs: jarray): jobject;\nvar\n  LC: ")
+          .append(cbDisp.get(t)).append(";\n  LV: jvalue;\n");
+        for (int k = 0; k < fs.size(); k++) {
+            Func f = fs.get(k);
+            for (int i = 0; i < f.params.size(); i++) {
+                CType p = f.params.get(i);
+                sb.append("  LB").append(k).append('_').append(i).append(": ").append(p.pas()).append(";\n");
+                if (p.wrapped() != null)
+                    sb.append("  LO").append(k).append('_').append(i).append(": ").append(p.wrapped().intf)
+                      .append(";\n");
+            }
+            if (f.ret != null) sb.append("  LR").append(k).append(": ").append(f.ret.pas()).append(";\n");
+        }
+        sb.append("begin\n  Result := nil;\n  LV.j := 0;\n  LC := ").append(cbDisp.get(t))
+          .append("(JavaComTypedTarget(ATarget, ").append(BindingGenerator.pasStr(t.cls.getName()))
+          .append("));\n  case AIndex of\n");
+        for (int k = 0; k < fs.size(); k++) {
+            Func f = fs.get(k);
+            Member m = f.member;
+            sb.append("    ").append(k).append(":\n      begin\n");
+            List<String> args = new ArrayList<>();
+            for (int i = 0; i < m.params.length; i++) {
+                String b = "LB" + k + "_" + i;
+                args.add(b);
+                sb.append("        LV := JrArgValue(AArgs, ").append(i).append(", ")
+                  .append(BindingGenerator.kind(m.params[i])).append(");\n");
+                sb.append(assignOut(m.params[i], pasFromJava(m.params[i]), b, "LO" + k + "_" + i)
+                        .replace("\n  ", "\n        ").replaceFirst("^  ", "        "));
+            }
+            String call = "LC." + BindingGenerator.esc(f.pasName) + (args.isEmpty() ? "" : "(" + String.join(", ", args) + ")");
+            Class<?> r = m.ret;
+            if (r == void.class) {
+                sb.append("        ").append(call).append(";\n");
+            } else {
+                String lr = "LR" + k;
+                sb.append("        ").append(lr).append(" := ").append(call).append(";\n");
+                String conv;
+                if (r.isArray() && !r.getComponentType().isPrimitive() && r.getComponentType() != String.class) {
+                    // the element class from this unit's slots (g.argToJava would use the Pascal unit's)
+                    String jn = BindingGenerator.c2jni(r.getComponentType());
+                    conv = "JrNewObjectArray(" + argIn(r, lr) + ", JrResolveClass(" + classesVar + "["
+                            + classSlots.get(jn) + "], " + BindingGenerator.pasStr(jn) + "))";
+                } else {
+                    conv = g.argToJava(r, argIn(r, lr));
+                }
+                if (r.isPrimitive()) {
+                    sb.append("        LV.").append(BindingGenerator.jvalueField(r)).append(" := ").append(conv)
+                      .append(";\n        Result := JrBox(LV, ").append(BindingGenerator.kind(r)).append(");\n");
+                } else {
+                    if (conv.startsWith("JrHandle(")) conv = "JrNewLocalRef(" + conv + ")";
+                    sb.append("        Result := ").append(conv).append(";\n");
+                }
+            }
+            sb.append("      end;\n");
+        }
+        sb.append("  end;\nend;\n\n");
     }
 
     // ------------------------------------------------------------------ types
@@ -402,25 +541,36 @@ final class ComGenerator {
 
     /** Statements assigning Pascal value expression e (of Java type c) to Result. */
     String resultOut(Class<?> c, String e) {
+        return assignOut(c, e, "Result", "LR");
+    }
+
+    /** Statements assigning Pascal value expression e (of Java type c) to COM variable target;
+     *  tmp is a variable of the Pascal interface type, for wrapped types. */
+    String assignOut(Class<?> c, String e, String target, String tmp) {
+        String a = "  " + target + " := ";
         if (c.isPrimitive()) return switch (c.getName()) {
-            case "char" -> "  Result := WideString(" + e + ");\n";
-            default -> "  Result := " + e + ";\n";
+            case "char" -> a + "WideString(" + e + ");\n";
+            default -> a + e + ";\n";
         };
-        if (c == String.class) return "  Result := " + e + ";\n";
+        if (c == String.class) return a + e + ";\n";
         if (c.isArray()) {
             Class<?> el = c.getComponentType();
-            if (el.isPrimitive()) return "  Result := Jr" + BindingGenerator.cap(el.getName()) + "ArrayToVar(" + e + ");\n";
-            if (el == String.class) return "  Result := JrStringArrayToVar(" + e + ");\n";
-            return "  Result := JrObjectArrayToVar(" + e + ");\n";
+            if (el.isPrimitive()) return a + "Jr" + BindingGenerator.cap(el.getName()) + "ArrayToVar(" + e + ");\n";
+            if (el == String.class) return a + "JrStringArrayToVar(" + e + ");\n";
+            return a + "JrObjectArrayToVar(" + e + ");\n";
         }
         TInfo t = g.types.get(c);
-        if (t != null && c != Object.class) return "  LR := " + e + ";\n" + wrapResult(t, "LR");
-        return "  Result := JavaToVariant(" + e + ");\n";
+        if (t != null && c != Object.class) return "  " + tmp + " := " + e + ";\n" + wrapInto(t, tmp, target);
+        return a + "JavaToVariant(" + e + ");\n";
     }
 
     String wrapResult(TInfo t, String v) {
-        return "  if " + v + " = nil then Result := nil else Result := " + auto.get(t) + ".Create(" + v + ", "
-                + disp.get(t) + ", " + typeLibFn + ");\n";
+        return wrapInto(t, v, "Result");
+    }
+
+    String wrapInto(TInfo t, String v, String target) {
+        return "  if " + v + " = nil then " + target + " := nil else " + target + " := " + auto.get(t) + ".Create("
+                + v + ", " + disp.get(t) + ", " + typeLibFn + ");\n";
     }
 
     // ------------------------------------------------------------------ emission
@@ -478,7 +628,9 @@ final class ComGenerator {
     void emitBody(StringBuilder sb, String owner, Func f, TInfo t, boolean isStatic) {
         sb.append(heading(f, f.cName, owner)).append('\n');
         boolean needLR = (f.ret != null && f.ret.wrapped() != null);
-        if (needLR) sb.append("var\n  LR: ").append(f.ret.wrapped().intf).append(";\n");
+        if (needLR || f.vars != null) sb.append("var\n");
+        if (needLR) sb.append("  LR: ").append(f.ret.wrapped().intf).append(";\n");
+        if (f.vars != null) sb.append(f.vars);
         sb.append("begin\n");
         if (f.special != null) {
             sb.append(f.special);
@@ -505,7 +657,8 @@ final class ComGenerator {
           .append(entryFn).append(" in-process.\n  Java types:\n");
         for (TInfo t : g.sortedTypes())
             sb.append("    ").append(t.cls.getName()).append(" -> ").append(disp.get(t)).append(" / ")
-                    .append(clsIntf.get(t)).append('\n');
+                    .append(clsIntf.get(t)).append(cbDisp.containsKey(t) ? " / " + cbDisp.get(t) : "")
+                    .append('\n');
         sb.append("}\nunit ").append(comUnit).append(";\n\ninterface\n\nuses\n")
           .append("  Winapi.ActiveX, System.SysUtils, System.SyncObjs, JavaBridge, JavaBridgeCom, JavaBridgeAuto,\n  ")
           .append(unit);
@@ -526,6 +679,11 @@ final class ComGenerator {
             emitInterface(sb, clsIntf.get(t), "IDispatch",
                     BindingGenerator.guid("pascal-java-bridge-com-class-iid:" + t.cls.getName()), stat.get(t),
                     t.cls.getName() + ": constructors and static members");
+        for (TInfo t : order)
+            if (cbDisp.containsKey(t))
+                emitInterface(sb, cbDisp.get(t), "IDispatch", callbackIid(t), cbFuncs.get(t),
+                        t.cls.getName() + ": implement this in a COM client and pass it to "
+                                + clsIntf.get(t) + ".Implement");
         emitInterface(sb, entryIntf, "IDispatch", BindingGenerator.guid("pascal-java-bridge-com-entry-iid:" + unit),
                 entry, "entry object of " + unit);
         sb.append("{ The type library (built once, in memory). }\nfunction ").append(typeLibFn).append(": ITypeLib;\n");
@@ -543,13 +701,20 @@ final class ComGenerator {
             emitClass(sb, clsAuto.get(t), "TJavaAutoObject", clsIntf.get(t), stat.get(t), stat.get(t), null);
         emitClass(sb, entryClass, "TJavaAutoObject", entryIntf, entry, entry, "  private\n    FJvmPath: string;\n");
         sb.append("var\n  ").append(libVar).append(": ITypeLib;\n  ").append(lockVar)
-          .append(": TCriticalSection;\n\n");
+          .append(": TCriticalSection;\n");
+        if (!classSlots.isEmpty())
+            sb.append("  ").append(classesVar).append(": array[0..").append(classSlots.size() - 1)
+              .append("] of jclass;\n");
+        sb.append('\n');
         // type library description
         sb.append("procedure ").append(describeFn).append("(B: TJavaTypeLibBuilder);\nbegin\n");
         for (TInfo t : order)
             describe(sb, disp.get(t), t.parent == null ? "" : disp.get(t.parent), t.cls.getName(), inst.get(t));
         for (TInfo t : order)
             describe(sb, clsIntf.get(t), "", t.cls.getName() + " (class)", stat.get(t));
+        for (TInfo t : order)
+            if (cbDisp.containsKey(t))
+                describe(sb, cbDisp.get(t), "", t.cls.getName() + " (callback)", cbFuncs.get(t));
         describe(sb, entryIntf, "", "entry object of " + unit, entry);
         sb.append("  B.AddCoClass('").append(coName).append("', CLASS_").append(coName).append(", '")
           .append(entryIntf).append("', ").append(BindingGenerator.pasStr("Java classes of " + unit))
@@ -567,6 +732,8 @@ final class ComGenerator {
         sb.append("function ").append(entryFn).append(": ").append(entryIntf).append(";\nbegin\n  Result := ")
           .append(entryClass).append(".Create(nil, ").append(entryIntf).append(", ").append(typeLibFn)
           .append(");\nend;\n\n");
+        // typed callbacks (before the Implement bodies that use them)
+        for (TInfo t : order) if (typedDispatch.containsKey(t)) emitTypedDispatch(sb, t);
         // bodies
         for (TInfo t : order) for (Func f : inst.get(t)) emitBody(sb, auto.get(t), f, t, false);
         for (TInfo t : order) for (Func f : stat.get(t)) emitBody(sb, clsAuto.get(t), f, t, true);
@@ -590,6 +757,10 @@ final class ComGenerator {
               .append(", '").append(f.ret == null ? "" : f.ret.tlb()).append("', [")
               .append(String.join(", ", types)).append("], [").append(String.join(", ", names)).append("]);\n");
         }
+    }
+
+    String callbackIid(TInfo t) {
+        return BindingGenerator.guid("pascal-java-bridge-com-callback-iid:" + t.cls.getName());
     }
 
     String libId() { return BindingGenerator.guid("pascal-java-bridge-com-libid:" + unit); }

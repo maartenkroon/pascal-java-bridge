@@ -22,6 +22,15 @@ public class CallbackHost {
         default String describe() { return "calc:" + name(); }
     }
 
+    /** A callback returning an object array (typed COM callbacks need the element class). */
+    public interface Source {
+        Object[] items(int n);
+    }
+
+    public static String joinItems(Source s, int n) {
+        return Arrays.toString(s.items(n));
+    }
+
     private final List<Listener> listeners = new ArrayList<>();
 
     public void addListener(Listener l) { listeners.add(l); }

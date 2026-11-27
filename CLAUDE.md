@@ -40,9 +40,10 @@ mvn -B verify                                                              # Jav
   from the compiled `PascalInvocationHandler` bytecode. It is committed and only rewritten when
   its content changes. If it shows up as modified without handler changes, Eclipse (ECJ) probably
   compiled `handler/target/classes`; `mvn clean` restores it.
-- `runtime/JavaBridgeCom.pas` (Delphi/Windows only, not used by generated code): late-bound
-  `IDispatch` over Java objects (`TJavaDispatch`), the entry object `JavaComJVM` and
-  `Implement` callbacks. `runtime/JavaBridgeDynamic.inc` is generated the same way from
+- `runtime/JavaBridgeCom.pas` (Delphi/Windows only, used by `--com` output, not by the plain
+  wrappers): late-bound `IDispatch` over Java objects (`TJavaDispatch`), the entry object
+  `JavaComJVM` and `Implement` callbacks (by name; typed ones through `JavaComImplementTyped`,
+  with the same owner-thread rule and deferred release). `runtime/JavaBridgeDynamic.inc` is generated the same way from
   `pascaljavabridge.dynamic.DynamicInvoker` (writer args: `<classes> <inc> <pkg-dir> DYNAMIC <src>`),
   defined through `JrDefineClass`. Its `{$IF DYNAMIC_CLASS_COUNT <> 3}` guard must follow the
   number of (nested) classes. Both are in `RUNTIME_FILES`, so `--with-runtime` copies them.
@@ -67,6 +68,11 @@ mvn -B verify                                                              # Jav
   `Get_`/`Set_`, DISPIDs), `C_n` implementing methods mapped by resolution clauses. The Delphi
   interface order must equal the `AddFunc` order (vtable). With `--unit-per-package` it is still
   one COM unit and one type library; its `uses` adds every package unit (names are global).
+  Callback types also get `IJFooCallbackDisp` (only the abstract methods, parent `IDispatch`) and
+  `ComDispatch_Foo`; `Implement` uses them when the object supports the interface. The COM unit
+  has its own class slots (`G<unit>ComClasses`, for `Object[]` results): don't call
+  `g.argToJava` for object arrays, it would allocate slots in the Pascal unit's model.
+  A type library keeps one spelling per name (case-insensitive, first one wins).
 - `comserver/PascalJavaBridgeCom.dpr`: Delphi in-process COM server (hand-written class factory
   and `DllRegisterServer`/`DllInstall`, no TComObject/type library). CLSID is name-based
   (`pascal-java-bridge-com-clsid:PascalJavaBridge.JVM`); keep it stable. PowerShell sees no

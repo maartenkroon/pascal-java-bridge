@@ -180,8 +180,8 @@ from the plan above:
 - Generated server: `<unit>ComServer.dpr`, using the generic `JavaComClassObject` /
   `JavaComRegisterServer` from `JavaBridgeAuto`.
 - Threading model `Both`, like the late-bound server.
-- Tests: `TestComEarly.pas` (47, in process). With `-Dcom.scripts`, the registered server is
-  tested from VBScript (8) and from PowerShell and C# (23): the C# client is compiled against an
+- Tests: `TestComEarly.pas` (55, in process). With `-Dcom.scripts`, the registered server is
+  tested from VBScript (8) and from PowerShell and C# (26): the C# client is compiled against an
   interop assembly that .NET's `TypeLibConverter` makes from the registered `.tlb`, and it calls
   through the vtables.
 
@@ -191,8 +191,23 @@ that mode too, so the COM unit differs from the single-unit one only in its `use
 `TestComEarly` passes against both layouts; the per-package server is compiled but not
 registered, because it has the same CLSID and ProgID as the single-unit one.
 
-Still open for Part 2: early-bound callbacks with typed COM interfaces (now `Implement` takes any `IDispatch`); 32-bit;
-VBA in Office; and returning the most specific wrapper for a result's run-time class (now the
+Typed callbacks (2026-11-27): every interface with abstract methods also gets
+`IJFooCallbackDisp`, a dual interface (parent `IDispatch`) with just the abstract methods, like
+the Pascal `IJFooCallback`. Not `IJFooDisp` itself, because a client would then have to implement
+all of `Object`'s members too. `IJFooClass.Implement` still takes an `IDispatch`. If the object
+supports `IJFooCallbackDisp` (a C# class implementing the interop interface, a Delphi class), the
+proxy's calls go through a generated `ComDispatch_Foo`: Java arguments to COM types, a vtable call,
+the result back to Java. Other objects (script objects) are still called by name. The runtime part
+is `JavaComImplementTyped` / `JavaComTypedTarget` in `JavaBridgeCom`, with the same thread rule and
+deferred release as late binding. `Object[]` results get their element class from the COM unit's
+own class slots. Tested from Delphi (vtable only, with `IDispatch` failing; exceptions; release
+after GC; `Object[]` results) and from C# (Calculator, Listener, an exception thrown in C#).
+
+Found on the way: a type library keeps one spelling per name, case-insensitively, so the entry's
+`List` property is `list` in `JDemo` (`Torture.list()` was added first). That matters only to
+case-sensitive clients (C#, C++); see the README.
+
+Still open for Part 2: 32-bit; VBA in Office; and returning the most specific wrapper for a result's run-time class (now the
 declared type is used; `Cast` converts).
 
 ## Open decisions (for the user)

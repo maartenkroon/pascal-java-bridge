@@ -32,6 +32,7 @@ Check ($msg -like "*boom*") "Java exception ($msg)"
 "C# (early bound through an interop assembly)"
 $dir = Join-Path ([IO.Path]::GetTempPath()) ("pjb-interop-" + [Guid]::NewGuid())
 New-Item -ItemType Directory $dir | Out-Null
+$ErrorActionPreference = "Stop"   # a C# compile error must fail the test
 try {
     Add-Type -TypeDefinition @"
 using System;
@@ -87,8 +88,42 @@ public static class PjbEarly {
         check((int)m.@get("k") == 42, "HashMap with VARIANTs");
         try { t.fail("boom"); check(false, "exception"); }
         catch (System.Runtime.InteropServices.COMException ex) { check(ex.Message.Contains("boom"), "Java exception -> COMException"); }
+
+        // typed callbacks: C# classes implementing the generated callback interfaces
+        var calc = new Calc { Entry = e };
+        string s = e.CallbackHost.useCalculator(e.CallbackHost_Calculator.Implement(calc));
+        check(s.StartsWith("5,3.0,true,calc:cs,[0, 1, 4],ww,"), "typed Calculator implemented in C# (" + s + ")");
+        var listener = new Listener();
+        IJCallbackHost_ListenerDisp jl = e.CallbackHost_Listener.Implement(listener);
+        IJCallbackHostDisp host = e.CallbackHost.New();
+        host.addListener(jl);
+        host.fire("x", 5);
+        check(listener.Log == "x=5;", "typed Listener, called from Java");
+        string r = e.CallbackHost.runCatching(e.Runnable.Implement(new Failing()));
+        check(r.Contains("RuntimeException") && r.Contains("cs boom"), "C# exception -> Java RuntimeException (" + r + ")");
         return 0;
     }
+}
+public class Calc : IJCallbackHost_CalculatorCallbackDisp {
+    public IJDemoEntry Entry;
+    public int apply(int a, int b) { return a + b; }
+    public string name() { return "cs"; }
+    public object range(int n) { var r = new int[n]; for (int i = 0; i < n; i++) r[i] = i * i; return r; }
+    public double scale(double x) { return x * 2; }
+    public bool test(long v, string c) { return v == 5 && c == "x"; }
+    public IJListDisp wrap(string s) {
+        IJArrayListDisp a = Entry.ArrayList.New();
+        a.add(s + s);
+        // "list", not "List": a type library has one spelling per name, and Torture.list() came first
+        return Entry.list.Cast(a);
+    }
+}
+public class Listener : IJCallbackHost_ListenerCallbackDisp {
+    public string Log = "";
+    public void onEvent(string name, int value) { Log += name + "=" + value + ";"; }
+}
+public class Failing : IJRunnableCallbackDisp {
+    public void run() { throw new InvalidOperationException("cs boom"); }
 }
 "@
     # output of a script block called as a .NET delegate does not reach the pipeline: Write-Host
@@ -96,6 +131,9 @@ public static class PjbEarly {
         param($c, $w)
         if ($c) { Write-Host "  ok   $w" } else { Write-Host "  FAIL $w"; $script:failures++ }
     })
+} catch {
+    "  FAIL C# section: $($_.Exception.Message)"
+    $failures++
 } finally {
     Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
 }
